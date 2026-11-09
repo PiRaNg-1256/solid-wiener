@@ -1,7 +1,25 @@
-# Gaming Shorts Clipper — Build Plan (draft for review)
+# Gaming Shorts Clipper — Build Plan
 
-*Status: plan only. Nothing is built yet. Written 2026-11-09.*
-*GTA 6 launches **Nov 19, 2026** on PS5 and Xbox Series X|S (no PC version announced).*
+*Written 2026-11-09. GTA 6 launches **Nov 19, 2026** on PS5 and Xbox Series X|S (no PC version announced).*
+
+## Status
+
+**Phase 1 is built** (see [README.md](README.md)). Decisions from the review:
+
+- **Computer:** Windows. Setup is a double-click `setup.cmd`, and you run the tool with `clipper`.
+- **Sources:** any YouTube video, at the user's risk. The on-screen credit is on by default.
+- **Own footage:** no console, so local recordings are a side feature (local files still work).
+- **Captions:** English and Hindi, detected automatically. Hindi is shown in Devanagari, with an option to translate it to English.
+
+Changes from the plan, made while building:
+
+- **Minimum clip length is 20 s, not 15,** so viewers get the setup before the payoff.
+- **The loudness fallback and local-file input came forward from phase 2/3.** They're small, and the fallback makes the tool usable on launch-day videos that don't have a graph yet.
+- **Loudness normalization is my own code, not FFmpeg's `loudnorm`.** FFmpeg missed the target by more than 1 LU on clips with a sudden loud burst. The new step (gain + peak limiter + re-measure) is tested to land within ±0.5 LU.
+- **Downloads are checked before use.** yt-dlp can report success with an empty file; broken files are now deleted, never cached.
+- **Text sizes come from the font file's own metrics.** The Hindi-capable font draws much smaller than its size number suggests otherwise.
+
+Verified in the sandbox: the yt-dlp partial download keeps sound and picture within a few milliseconds of the source. A full 30 s render from 1080p60 takes about 37 s on 4 CPU cores. Not verifiable there: real YouTube requests (blocked by the sandbox's network) and real speech recognition (model download blocked). Both run for the first time on the user's PC.
 
 ---
 
@@ -217,12 +235,12 @@ config.yaml   tests/   output/ (not committed)
 
 ---
 
-## 9. Decisions I need from you
+## 9. Decisions (answered 2026-11-09)
 
-1. **Your computer:** Windows, Mac or Linux? Do you have an NVIDIA GPU?
-2. **Sources:** (a) any YouTube video, at your risk; (b) only your own footage and creators who said yes; (c) both, with each source flagged. *My pick: (c).*
-3. **Own footage:** do you have a PS5 or Xbox, and do you plan to buy GTA 6?
-4. **Caption language:** English only, or Hindi or other languages too? (Whisper can also translate speech into English captions.)
+1. **Computer:** Windows (no GPU mentioned, so captions run on the CPU by default).
+2. **Sources:** (a), any YouTube video, at the user's risk.
+3. **Own footage:** no console.
+4. **Caption language:** English and Hindi.
 
 ---
 

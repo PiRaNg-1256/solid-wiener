@@ -1,0 +1,88 @@
+# Your settings. setup.cmd copies this file to config.yaml; edit config.yaml, not this one.
+# Anything you delete or leave out uses the built-in default shown here.
+
+output_dir: output          # finished clips go to output/review/<date>/...; move keepers to output/ready
+cache_dir: cache            # downloads and temporary files (safe to delete when the tool isn't running)
+ffmpeg: ""                  # full path to ffmpeg.exe, only if it isn't found automatically
+
+clip:
+  min_seconds: 20
+  max_seconds: 59           # keep under 60: Shorts over 1 minute get blocked if anyone claims copyright
+  target_seconds: 30        # length used when the replay spike is very wide (long streams)
+  lead_in_seconds: 5        # start this much before the spike, so viewers see the setup
+  tail_seconds: 3           # keep this much after it, for the reaction
+  skip_start_percent: 3     # ignore the start of the video (everyone watches it, so the graph is high there)
+  skip_end_percent: 2
+  min_prominence: 0.08      # how much a spike must stand out to count (graph values go from 0 to 1)
+  min_gap_seconds: 60       # minimum distance between two clips from the same video
+  padding_seconds: 10       # extra footage downloaded on each side so the cut can be adjusted
+  use_sponsorblock: true    # skip sponsor reads / intros marked by the SponsorBlock community
+
+style:
+  layout: blur              # blur = whole gameplay on a blurred background, crop = fill the screen
+  zoom: 1.25                # blur layout: 1.0 shows the whole frame, higher = bigger gameplay, trimmed sides
+  font_file: Poppins-Black.ttf          # from assets/fonts; needs Hindi letters for Hindi captions
+  credit_font_file: Poppins-ExtraBold.ttf
+  caption_size: 84          # letter size in pixels (the video is 1080 x 1920)
+  caption_color: "#FFFFFF"
+  highlight_color: "#FFE600"  # colour of the word being spoken
+  caption_max_words: 3      # words on screen at once
+  caption_uppercase: true
+  hook_size: 54
+  hook_uppercase: true
+  hook_seconds: 0           # how long the hook stays on screen; 0 = the whole clip
+  credit: true              # show "footage: @creator" on the video
+  credit_text: "footage: {creator}"
+  credit_size: 28
+
+captions:
+  enabled: true
+  languages: [en, hi]       # the spoken language is detected among these
+  translate_to_english: false   # true = Hindi speech gets English captions
+  model: small              # tiny / base / small / medium / large-v3: bigger = more accurate but slower.
+                            # 'medium' is noticeably better for Hindi.
+  device: cpu               # cpu, or cuda if you have an NVIDIA GPU with CUDA 12 + cuDNN 9 installed
+
+music:
+  enabled: true
+  folder: assets/music      # put .mp3/.m4a files here; add 'Track.txt' next to 'Track.mp3' with its credit line
+  volume_db: -16            # music level compared with the game audio
+  duck_db: -8               # extra drop while someone is talking
+  export_without_music: true  # also save clip_nomusic.mp4, to add a trending sound in the YouTube app
+
+render:
+  preset: medium            # faster: veryfast / fast; better compression: slow
+  crf: 19                   # quality: lower = better and bigger files
+  max_fps: 60
+  loudness_lufs: -14        # YouTube plays everything at about -14 LUFS
+  true_peak_db: -1
+  keep_work_files: false    # true keeps temporary files in cache/work for troubleshooting
+
+youtube:
+  cookies_from_browser: ""  # if YouTube asks you to "confirm you're not a bot": firefox
+                            # (log into a throwaway Google account in Firefox first)
+  cookies_file: ""
+  sleep_between_requests: 0
+
+default_hashtags: ["#gaming", "#shorts"]
+
+title_templates:
+  - "{hook} 😳 {tag} #shorts"
+  - "Wait for it… 💀 {tag} #shorts"
+  - "Nobody expected this in {game} 🤯 #shorts"
+
+# Games are detected from the video title (first match wins) to pick hashtags.
+# Add your own the same way.
+games:
+  gta6:
+    name: GTA 6
+    keywords: [gta 6, gta vi, gta6, gtavi, grand theft auto vi, grand theft auto 6]
+    hashtags: ["#GTA6", "#GTAVI", "#GrandTheftAuto"]
+  gta5:
+    name: GTA 5
+    keywords: [gta 5, gta v, gta5, gtav, gta online, grand theft auto v]
+    hashtags: ["#GTA5", "#GTAV", "#GTAOnline"]
+  rdr2:
+    name: Red Dead Redemption 2
+    keywords: [rdr2, rdr 2, red dead redemption 2, red dead 2]
+    hashtags: ["#RDR2", "#RedDeadRedemption2"]

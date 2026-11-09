@@ -1,0 +1,2 @@
+# keep Windows line endings in batch files, wherever the repo is downloaded
+*.cmd -text
