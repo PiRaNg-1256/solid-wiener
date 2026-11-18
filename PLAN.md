@@ -9,7 +9,7 @@
 - **Computer:** Windows. Setup is a double-click `setup.cmd`, and you run the tool with `clipper`.
 - **Sources:** any YouTube video, at the user's risk. The on-screen credit is on by default.
 - **Own footage:** no console, so local recordings are a side feature (local files still work).
-- **Captions:** English and Hindi, detected automatically. Hindi is shown in Devanagari, with an option to translate it to English.
+- **Captions:** English and Hindi, detected automatically. Hindi is shown in English letters ("bhai ye kya ho gaya") and in Hindi script: by default every Hindi clip is saved in both versions. Translating Hindi to English captions is also an option.
 
 Changes from the plan, made while building:
 
@@ -17,6 +17,7 @@ Changes from the plan, made while building:
 - **The loudness fallback and local-file input came forward from phase 2/3.** They're small, and the fallback makes the tool usable on launch-day videos that don't have a graph yet.
 - **Loudness normalization is my own code, not FFmpeg's `loudnorm`.** FFmpeg missed the target by more than 1 LU on clips with a sudden loud burst. The new step (gain + peak limiter + re-measure) is tested to land within ±0.5 LU.
 - **Downloads are checked before use.** yt-dlp can report success with an empty file; broken files are now deleted, never cached.
+- **Hindi in English letters uses a converter written for this project:** pronunciation rules (spoken Hindi drops many written vowels: करना → "karna") plus a dictionary of about 350 common words. The dictionary also covers English words that Whisper writes in Hindi script (पुलिस → "police", not "pulis") and GTA/RDR character names.
 - **Text sizes come from the font file's own metrics.** The Hindi-capable font draws much smaller than its size number suggests otherwise.
 
 Verified in the sandbox: the yt-dlp partial download keeps sound and picture within a few milliseconds of the source. A full 30 s render from 1080p60 takes about 37 s on 4 CPU cores. Not verifiable there: real YouTube requests (blocked by the sandbox's network) and real speech recognition (model download blocked). Both run for the first time on the user's PC.

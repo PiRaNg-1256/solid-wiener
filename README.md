@@ -13,7 +13,8 @@ music, and saves it with a ready-to-paste title and description. Free, and it ru
    marked on SponsorBlock, and the fake spike right after a sponsor, where people who skipped the ad land.
 3. Downloads **only that part** of the video, not the whole thing.
 4. Snaps the cut to a scene change or a pause in speech, so it never cuts mid-word. Length: 20–59 seconds.
-5. Turns speech into captions (English or Hindi, detected automatically).
+5. Turns speech into captions (English or Hindi, detected automatically). Hindi comes out in English letters
+   ("bhai ye kya ho gaya"), in Hindi script, or both.
 6. Builds a 1080×1920 Short: gameplay on a blurred background, your hook on top, captions below, and a small
    "footage: @creator" credit.
 7. Adds music that starts at the track's energetic part and dips while someone talks. Loudness is set to
@@ -64,6 +65,7 @@ Make the clip. It shows what's said in the clip and asks you for the hook text:
 | `--start 12:30 --end 12:58` | Choose the moment yourself |
 | `--lang hi` or `--lang en` | Force the caption language (default: detect English or Hindi) |
 | `--translate` | Hindi speech → English captions |
+| `--hindi-script latin` | Hindi captions in English letters only (`devanagari` = Hindi script only, `both` = default) |
 | `--layout crop` | Fill the whole screen instead of the blurred layout |
 | `--zoom 1.0` | Blurred layout showing the entire game frame (default 1.25 = bigger gameplay) |
 | `--music none` or `--music "C:\music\track.mp3"` | No music, or a specific track |
@@ -82,6 +84,8 @@ output\
   review\2026-11-20\001_gta-6-cops-don-t-play\
       clip.mp4           the Short
       clip_nomusic.mp4   same clip, game audio only
+      clip_devanagari.mp4  for Hindi speech: same clip with Hindi-script captions
+                           (clip.mp4 then has Hindi in English letters)
       post.txt           title ideas, description (with credits), hashtags, checklist
       thumb.jpg          frame from the most intense moment
       meta.json          source link, times, scores, music used
@@ -118,7 +122,7 @@ yourself with `--start`.
 Everything is in `config.yaml` (created by setup, with comments). Common changes:
 
 - `style.layout`, `style.zoom`, `style.caption_size`, `style.highlight_color`
-- `captions.model`, `captions.translate_to_english`
+- `captions.model`, `captions.translate_to_english`, `captions.hindi_script` (both / latin / devanagari)
 - `music.volume_db`, `music.duck_db`
 - `render.preset: veryfast` if rendering is too slow
 

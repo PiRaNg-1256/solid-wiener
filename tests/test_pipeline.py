@@ -113,3 +113,35 @@ def test_video_without_audio_still_renders(cfg, tmp_path):
     folders = make(str(src), MakeOptions(start=10, end=35, hook="NO SOUND", prompt=False), cfg)
     info = media.probe(folders[0] / "clip.mp4")
     assert (info.width, info.height) == (1080, 1920) and info.has_audio
+
+
+def test_hindi_clip_gets_english_letters_and_hindi_script_versions(cfg, tmp_path, monkeypatch):
+    from clipper.transcribe import Transcript, Word
+
+    hindi = ["भाई", "देख", "पुलिस", "आ", "गई।", "भागो", "यार", "जल्दी", "निकल।"]
+
+    def fake_hindi(audio, c, language=None):
+        total, t, words = len(audio) / 16000, 1.0, []
+        i = 0
+        while t + 0.5 < total:
+            words.append(Word(t, t + 0.4, hindi[i % len(hindi)], 0.9))
+            t += 0.5
+            i += 1
+        return Transcript(language="hi", probability=0.9, words=words)
+
+    monkeypatch.setattr("clipper.pipeline.transcribe", fake_hindi)
+    cfg.render.keep_work_files = True
+    src = make_video(tmp_path / "hindi.mp4", duration=60, burst_at=30.0)
+    folder = make(str(src), MakeOptions(start=20, end=42, hook="भाई ये क्या हो गया", music="none", prompt=False), cfg)[0]
+    meta = check_clip(folder, max_len=22)
+    assert meta["captions"]["hindi_scripts"] == ["latin", "devanagari"]
+    assert (folder / "clip_devanagari.mp4").exists()
+    assert media.probe(folder / "clip_devanagari.mp4").duration == pytest.approx(media.probe(folder / "clip.mp4").duration, abs=0.1)
+    work = next((cfg.root / "cache" / "work").iterdir())
+    latin, devanagari = (work / "clip.ass").read_text(encoding="utf-8"), (work / "clip_devanagari.ass").read_text(encoding="utf-8")
+    assert "POLICE" in latin and "BHAGO" not in latin and "BHAAGO" in latin and "पुलिस" not in latin.split("[Events]")[1].split("Hook")[-1]
+    assert "पुलिस" in devanagari
+    assert "English letters" in (folder / "post.txt").read_text(encoding="utf-8")
+
+    only_latin = make(str(src), MakeOptions(start=20, end=42, hook="X", music="none", prompt=False, hindi_script="latin", force=True), cfg)[0]
+    assert not (only_latin / "clip_devanagari.mp4").exists()

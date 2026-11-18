@@ -39,6 +39,8 @@ captions:
   enabled: true
   languages: [en, hi]       # the spoken language is detected among these
   translate_to_english: false   # true = Hindi speech gets English captions
+  hindi_script: both        # Hindi captions: latin = English letters ("bhai ye kya ho gaya"),
+                            # devanagari = Hindi script, both = two videos (clip.mp4 latin, clip_devanagari.mp4)
   model: small              # tiny / base / small / medium / large-v3: bigger = more accurate but slower.
                             # 'medium' is noticeably better for Hindi.
   device: cpu               # cpu, or cuda if you have an NVIDIA GPU with CUDA 12 + cuDNN 9 installed

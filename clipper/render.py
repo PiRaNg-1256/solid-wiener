@@ -19,10 +19,11 @@ def render_video(
     out_path: Path,
     cfg: RenderConfig,
     src_fps: float,
+    ass_name: str = "captions.ass",
 ) -> None:
-    """workdir must contain captions.ass and a fonts/ folder. FFmpeg runs inside workdir and refers
+    """workdir must contain the .ass file and a fonts/ folder. FFmpeg runs inside workdir and refers
     to them by relative name: Windows paths (C:\\...) break FFmpeg's subtitle filter otherwise."""
-    filters = f"[0:v]{layout.filter},ass=captions.ass:fontsdir=fonts"
+    filters = f"[0:v]{layout.filter},ass={ass_name}:fontsdir=fonts"
     if src_fps and src_fps > cfg.max_fps + 0.5:
         filters += f",fps={cfg.max_fps}"
     filters += ",format=yuv420p[v]"

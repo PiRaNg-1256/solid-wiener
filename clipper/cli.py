@@ -82,6 +82,9 @@ def make(
     music: Optional[str] = typer.Option(None, help="'none', or a music file. Default: random track from assets/music"),
     lang: Optional[str] = typer.Option(None, help="Caption language: auto, en or hi"),
     translate: Optional[bool] = typer.Option(None, "--translate/--no-translate", help="Hindi speech -> English captions"),
+    hindi_script: Optional[str] = typer.Option(
+        None, "--hindi-script", help="Hindi captions: both (two files), latin (English letters) or devanagari"
+    ),
     no_captions: bool = typer.Option(False, "--no-captions", help="Don't add captions"),
     no_credit: bool = typer.Option(False, "--no-credit", help="Don't show the creator's name on screen"),
     game: Optional[str] = typer.Option(None, help="Game for hashtags (gta6, gta5, rdr2 or your own from config.yaml)"),
@@ -101,6 +104,7 @@ def make(
         music=music,
         lang=lang.lower() if lang else None,
         translate=translate,
+        hindi_script=hindi_script,
         captions=False if no_captions else None,
         credit=False if no_credit else None,
         game=game,

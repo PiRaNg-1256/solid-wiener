@@ -16,6 +16,7 @@ from . import __version__, audio, captions, db, media, package, render, sponsorb
 from .analysis import envelope_db, pseudo_heatmap
 from .config import Config, validate
 from .download import cut_local, download_audio, download_segment
+from .hinglish import to_latin
 from .layout import build_layout
 from .metadata import VideoInfo, chapter_at, fetch_info
 from .moments import Moment, find_moments, manual_moment
@@ -34,6 +35,7 @@ class MakeOptions:
     zoom: float | None = None
     music: str | None = None  # None = random track from the music folder, "none", or a file path
     lang: str | None = None  # None/"auto" = detect among config languages, or "en" / "hi"
+    hindi_script: str | None = None  # both | latin | devanagari (None = use config)
     translate: bool | None = None
     captions: bool | None = None
     credit: bool | None = None
@@ -85,6 +87,8 @@ def _with_overrides(cfg: Config, opts: MakeOptions) -> Config:
         cfg.style.credit = opts.credit
     if opts.music is not None and opts.music.strip().lower() == "none":
         cfg.music.enabled = False
+    if opts.hindi_script:
+        cfg.captions.hindi_script = opts.hindi_script.lower()
     if opts.lang not in (None, "", "auto") and opts.lang not in ("en", "hi"):
         raise ClipperError("--lang must be auto, en or hi")
     validate(cfg)
@@ -147,6 +151,19 @@ def choose_moments(video: VideoInfo, local: Path | None, cfg: Config, opts: Make
     if not moments:
         raise ClipperError("Couldn't find a moment that stands out. Pick one yourself with --start mm:ss.")
     return moments
+
+
+def caption_variants(words: list[Word], transcript: Transcript, hindi_script: str) -> list[tuple[str, str, list[Word]]]:
+    """[(file name, script, words)]. The first one becomes clip.mp4. Hindi speech can be captioned in
+    English letters ("latin"), Hindi script ("devanagari"), or both (a second video file)."""
+    if transcript.language != "hi" or transcript.translated or not words:
+        return [("clip", "", words)]
+    latin = [Word(w.start, w.end, to_latin(w.text), w.prob) for w in words]
+    if hindi_script == "devanagari":
+        return [("clip", "devanagari", words)]
+    if hindi_script == "latin":
+        return [("clip", "latin", latin)]
+    return [("clip", "latin", latin), ("clip_devanagari", "devanagari", words)]
 
 
 def _describe(m: Moment) -> str:
@@ -226,7 +243,8 @@ def make_clip(
             for w in transcript.words
             if w.end > s + 0.05 and w.start < e - 0.05
         ]
-        clip_text = " ".join(w.text for w in clip_words)
+        variants = caption_variants(clip_words, transcript, cfg.captions.hindi_script)
+        clip_text = " ".join(w.text for w in variants[0][2])
         source_start, source_end = dl_start + s, dl_start + e
 
         hook = opts.hook
@@ -244,11 +262,12 @@ def make_clip(
                 raise ClipperError(f"Font file missing: {src}")
             shutil.copy2(src, fonts / name)
         credit = package.credit_line(cfg, video)
-        ass_text = captions.build_ass(
-            clip_words if cfg.captions.enabled else [], layout=layout, style=cfg.style, fonts_dir=cfg.fonts_dir,
-            duration=e - s, hook=hook, credit=credit,
-        )
-        (work / "captions.ass").write_text(ass_text, encoding="utf-8")
+        for name, _script, words in variants:
+            ass_text = captions.build_ass(
+                words if cfg.captions.enabled else [], layout=layout, style=cfg.style, fonts_dir=cfg.fonts_dir,
+                duration=e - s, hook=hook, credit=credit,
+            )
+            (work / f"{name}.ass").write_text(ass_text, encoding="utf-8")
 
         with rep.step("Mixing game audio and music"):
             track = audio.pick_track(cfg.path(cfg.music.folder), opts.music) if cfg.music.enabled else None
@@ -257,11 +276,13 @@ def make_clip(
             mixed = audio.prepare_audio(segment, seg.has_audio, s, e, clip_words, track, cfg.music, cfg.render, work)
 
         folder = package.new_clip_folder(cfg.path(cfg.output_dir), slugify(hook or video.title, 40, slugify(video.id, 20, "clip")))
-        with rep.step("Rendering the Short"):
-            render.render_video(segment, s, e, layout, work, mixed.mixed, folder / "clip.mp4", cfg.render, seg.fps)
+        with rep.step("Rendering the Short" + (f" ({len(variants)} versions)" if len(variants) > 1 else "")):
+            for name, _script, _words in variants:
+                out = folder / f"{name}.mp4"
+                render.render_video(segment, s, e, layout, work, mixed.mixed, out, cfg.render, seg.fps, ass_name=f"{name}.ass")
+                if mixed.track and cfg.music.export_without_music:
+                    render.replace_audio(out, mixed.game, folder / f"{name}_nomusic.mp4")
             render.thumbnail(folder / "clip.mp4", refined.payoff - s, folder / "thumb.jpg")
-            if mixed.track and cfg.music.export_without_music:
-                render.replace_audio(folder / "clip.mp4", mixed.game, folder / "clip_nomusic.mp4")
 
         game = package.detect_game(f"{video.title} {hook or ''}", cfg.games, opts.game)
         game_cfg = game[1] if game else None
@@ -269,8 +290,13 @@ def make_clip(
         titles = package.title_options(hook, game_cfg, cfg.title_templates, tags)
         desc = package.description(hook, video, source_start, mixed.track.credit if mixed.track else None, tags, credit is not None)
         notes = list(refined.notes)
-        if transcript.language == "hi" and not transcript.translated:
-            notes.append("Captions are in Hindi (Devanagari). Use --translate for English captions.")
+        scripts = [script for _name, script, _words in variants if script]
+        if scripts == ["latin", "devanagari"]:
+            notes.append("Two versions: clip.mp4 has Hindi in English letters, clip_devanagari.mp4 has Hindi script.")
+        elif scripts == ["latin"]:
+            notes.append("Captions: Hindi in English letters. Use --translate for English captions.")
+        elif scripts == ["devanagari"]:
+            notes.append("Captions: Hindi script. Use --translate for English captions.")
         package.write_post(folder, titles, desc, video, source_start, source_end, notes)
         package.write_meta(folder, {
             "tool_version": __version__,
@@ -291,6 +317,7 @@ def make_clip(
                 "enabled": cfg.captions.enabled, "language": transcript.language,
                 "probability": round(transcript.probability, 3), "translated": transcript.translated,
                 "words": len(clip_words), "note": transcript.note, "model": cfg.captions.model,
+                "hindi_scripts": scripts,
             },
             "layout": {"name": layout.name, "zoom": cfg.style.zoom},
             "music": None if not mixed.track else {

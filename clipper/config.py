@@ -53,6 +53,7 @@ class CaptionConfig:
     enabled: bool = True
     languages: list[str] = field(default_factory=lambda: ["en", "hi"])
     translate_to_english: bool = False
+    hindi_script: str = "both"  # latin (English letters) | devanagari | both (two video files)
     model: str = "small"  # tiny | base | small | medium | large-v3
     device: str = "cpu"  # cpu | cuda | auto
 
@@ -195,6 +196,8 @@ def validate(cfg: Config) -> None:
         raise ClipperError("style.zoom must be between 1.0 and 2.0")
     if not 5 <= cfg.clip.min_seconds <= cfg.clip.max_seconds <= 180:
         raise ClipperError("clip lengths must satisfy 5 <= min_seconds <= max_seconds <= 180")
+    if cfg.captions.hindi_script not in ("latin", "devanagari", "both"):
+        raise ClipperError("captions.hindi_script must be latin, devanagari or both")
     if cfg.captions.device not in ("cpu", "cuda", "auto"):
         raise ClipperError("captions.device must be cpu, cuda or auto")
     for color in (cfg.style.caption_color, cfg.style.highlight_color):
