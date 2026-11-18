@@ -85,7 +85,7 @@ def fake_transcribe(monkeypatch):
     """Replace Whisper (needs a model download) with deterministic words."""
     calls = {}
 
-    def _fake(audio, cfg, language=None):
+    def _fake(audio, cfg, language=None, **kwargs):
         calls["language"] = language
         total = len(audio) / 16000
         return Transcript(language=language or "en", probability=0.99, words=fake_words(total))

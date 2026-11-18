@@ -21,6 +21,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# NVIDIA's cuBLAS for CUDA 12: all the speech model (CTranslate2) needs to run on an NVIDIA GPU
+gpu = ["nvidia-cublas-cu12>=12.4,<13"]
 
 [project.scripts]
 clipper = "clipper.cli:main"

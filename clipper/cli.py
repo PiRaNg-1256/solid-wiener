@@ -18,7 +18,7 @@ from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
 
-from . import __version__, media, sponsorblock
+from . import __version__, gemini, gpu, media, render, sponsorblock
 from .audio import list_tracks
 from .config import load_config
 from .metadata import fetch_info
@@ -86,6 +86,7 @@ def make(
         None, "--hindi-script", help="Hindi captions: both (two files), latin (English letters) or devanagari"
     ),
     no_captions: bool = typer.Option(False, "--no-captions", help="Don't add captions"),
+    no_gemini: bool = typer.Option(False, "--no-gemini", help="Don't ask Gemini, use only the local speech model"),
     no_credit: bool = typer.Option(False, "--no-credit", help="Don't show the creator's name on screen"),
     game: Optional[str] = typer.Option(None, help="Game for hashtags (gta6, gta5, rdr2 or your own from config.yaml)"),
     force: bool = typer.Option(False, "--force", help="Make it even if you already clipped this part"),
@@ -106,6 +107,7 @@ def make(
         translate=translate,
         hindi_script=hindi_script,
         captions=False if no_captions else None,
+        gemini=False if no_gemini else None,
         credit=False if no_credit else None,
         game=game,
         force=force,
@@ -197,7 +199,10 @@ def _find_deno() -> str | None:
 
 
 @app.command(help="Check that everything the tool needs is installed and working.")
-def doctor(config: Optional[Path] = typer.Option(None, help="Use a different settings file")) -> None:
+def doctor(
+    config: Optional[Path] = typer.Option(None, help="Use a different settings file"),
+    recheck_gpu: bool = typer.Option(False, "--recheck-gpu", help="Forget the saved GPU test (e.g. after a driver update)"),
+) -> None:
     rows: list[tuple[str, bool, str]] = []
     required_failed = False
 
@@ -238,8 +243,39 @@ def doctor(config: Optional[Path] = typer.Option(None, help="Use a different set
         add("Fonts", not missing, "ok" if not missing else f"missing in assets/fonts: {', '.join(missing)}")
         tracks = list_tracks(cfg.path(cfg.music.folder))
         add("Music", bool(tracks), f"{len(tracks)} track(s) in {cfg.music.folder}" if tracks else f"no tracks in {cfg.music.folder} (clips will have no music)", required=False)
-        downloaded = model_is_downloaded(cfg.captions.model)
-        add("Speech model", True, f"'{cfg.captions.model}' " + ("downloaded" if downloaded else "downloads on first use (one time)"), required=False)
+        if recheck_gpu:
+            gpu.forget_gpu_checks(cfg.path(cfg.cache_dir))
+        gpus = gpu.nvidia_gpus()
+        add("NVIDIA GPU", True, ", ".join(f"{g.name} ({g.memory_mb // 1024} GB)" for g in gpus) or "none found", required=False)
+        speech_model = cfg.captions.model
+        if gpus and cfg.captions.device != "cpu":
+            gpu.prepare_cuda_libraries()
+            try:
+                import ctranslate2
+
+                cuda_ok = ctranslate2.get_cuda_device_count() > 0
+            except Exception:
+                cuda_ok = False
+            add("GPU library for speech (cuBLAS)", cuda_ok,
+                "ready" if cuda_ok else "missing or driver too old: run setup.cmd again, or update the NVIDIA driver",
+                required=False)
+            if speech_model == "auto":
+                speech_model = "large-v3" if cuda_ok else "small"
+            where = "GPU (tested on the first clip, then remembered)" if cuda_ok else "CPU"
+        else:
+            if speech_model == "auto":
+                speech_model = "small"
+            where = "CPU"
+        downloaded = model_is_downloaded(speech_model)
+        add("Speech model", True, f"{speech_model} on the {where}, "
+            + ("downloaded" if downloaded else "downloads on first use (one time)"), required=False)
+        names = {"h264_nvenc": "NVIDIA GPU", "h264_amf": "AMD GPU", "h264_qsv": "Intel GPU", "libx264": "CPU"}
+        if media.ffmpeg_has("encoders", "libx264"):
+            chosen = render.pick_encoder(cfg.render)
+            add("Video encoding", True, f"{chosen} ({names.get(chosen, chosen)})", required=False)
+        key_set = bool(gemini.api_key(cfg.captions.gemini))
+        add("Gemini (optional)", True, "key set: run  clipper gemini-test  to check your free quota" if key_set
+            else "not set: captions use only the local model", required=False)
         out = cfg.path(cfg.output_dir)
         try:
             out.mkdir(parents=True, exist_ok=True)
@@ -260,6 +296,24 @@ def doctor(config: Optional[Path] = typer.Option(None, help="Use a different set
     if required_failed:
         raise typer.Exit(1)
     console.print("[green]Ready.[/green] Try:  clipper peaks \"<youtube link>\"")
+
+
+@app.command("gemini-test", help="Check that your Gemini key works on the free tier (one tiny request per model).")
+def gemini_test(config: Optional[Path] = typer.Option(None, help="Use a different settings file")) -> None:
+    cfg = load_config(config)
+    table = Table(show_edge=False, title="Gemini free tier")
+    table.add_column("")
+    table.add_column("Model")
+    table.add_column("Result")
+    results = gemini.check(cfg.captions.gemini)
+    for model, ok, detail in results:
+        table.add_row("[green]✓[/green]" if ok else "[red]✗[/red]", model, escape(detail))
+    console.print(table)
+    if any(ok for _m, ok, _d in results):
+        console.print("Gemini will check caption words. When the free quota runs out, the local model takes over by itself.")
+    else:
+        console.print("Captions will use only the local model. Free keys sometimes start with zero quota for a model;"
+                      " check your limits at aistudio.google.com.")
 
 
 @app.command(help="Update the YouTube downloader. Fixes most 'download failed' errors.")

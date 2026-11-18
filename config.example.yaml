@@ -41,9 +41,14 @@ captions:
   translate_to_english: false   # true = Hindi speech gets English captions
   hindi_script: both        # Hindi captions: latin = English letters ("bhai ye kya ho gaya"),
                             # devanagari = Hindi script, both = two videos (clip.mp4 latin, clip_devanagari.mp4)
-  model: small              # tiny / base / small / medium / large-v3: bigger = more accurate but slower.
-                            # 'medium' is noticeably better for Hindi.
-  device: cpu               # cpu, or cuda if you have an NVIDIA GPU with CUDA 12 + cuDNN 9 installed
+  model: auto               # auto = large-v3 on an NVIDIA GPU, small on the CPU.
+                            # Or pick: tiny / base / small / medium / large-v3 (bigger = more accurate, slower)
+  device: auto              # auto = use the NVIDIA GPU if it passes a one-time test, else the CPU. Or: cpu / cuda
+  gemini:                   # optional, free: Gemini double-checks the words (the local model keeps the timing)
+    api_key: ""             # free key from aistudio.google.com; create it in a project WITHOUT billing,
+                            # so Google can never charge it. Or set the GEMINI_API_KEY environment variable.
+    models: [gemini-flash-latest, gemini-flash-lite-latest]   # tried in order; free-tier models
+    timeout_seconds: 45
 
 music:
   enabled: true
@@ -56,6 +61,8 @@ render:
   preset: medium            # faster: veryfast / fast; better compression: slow
   crf: 19                   # quality: lower = better and bigger files
   max_fps: 60
+  encoder: auto             # auto = GPU encoder if one works (NVIDIA h264_nvenc, AMD h264_amf, Intel h264_qsv),
+                            # else libx264 on the CPU (crf/preset above apply to libx264)
   loudness_lufs: -14        # YouTube plays everything at about -14 LUFS
   true_peak_db: -1
   keep_work_files: false    # true keeps temporary files in cache/work for troubleshooting

@@ -49,13 +49,21 @@ class StyleConfig:
 
 
 @dataclass
+class GeminiConfig:
+    api_key: str = ""  # free key from aistudio.google.com (or set GEMINI_API_KEY); empty = don't use Gemini
+    models: list[str] = field(default_factory=lambda: ["gemini-flash-latest", "gemini-flash-lite-latest"])
+    timeout_seconds: float = 45.0
+
+
+@dataclass
 class CaptionConfig:
     enabled: bool = True
     languages: list[str] = field(default_factory=lambda: ["en", "hi"])
     translate_to_english: bool = False
     hindi_script: str = "both"  # latin (English letters) | devanagari | both (two video files)
-    model: str = "small"  # tiny | base | small | medium | large-v3
-    device: str = "cpu"  # cpu | cuda | auto
+    model: str = "auto"  # auto = large-v3 on an NVIDIA GPU, small on CPU; or tiny/base/small/medium/large-v3
+    device: str = "auto"  # auto = NVIDIA GPU if it passes a one-time test, else CPU; or cpu / cuda
+    gemini: GeminiConfig = field(default_factory=GeminiConfig)
 
 
 @dataclass
@@ -72,6 +80,7 @@ class RenderConfig:
     preset: str = "medium"  # x264 speed: veryfast | faster | fast | medium | slow
     crf: int = 19  # quality: lower = better and bigger
     max_fps: int = 60
+    encoder: str = "auto"  # auto = GPU encoder if one works (NVIDIA/AMD/Intel), else libx264 on the CPU
     loudness_lufs: float = -14.0
     true_peak_db: float = -1.0
     keep_work_files: bool = False
@@ -199,7 +208,9 @@ def validate(cfg: Config) -> None:
     if cfg.captions.hindi_script not in ("latin", "devanagari", "both"):
         raise ClipperError("captions.hindi_script must be latin, devanagari or both")
     if cfg.captions.device not in ("cpu", "cuda", "auto"):
-        raise ClipperError("captions.device must be cpu, cuda or auto")
+        raise ClipperError("captions.device must be auto, cpu or cuda")
+    if cfg.render.encoder not in ("auto", "libx264", "h264_nvenc", "h264_amf", "h264_qsv"):
+        raise ClipperError("render.encoder must be auto, libx264, h264_nvenc, h264_amf or h264_qsv")
     for color in (cfg.style.caption_color, cfg.style.highlight_color):
         hex_to_ass(color)  # raises a readable error if the colour is malformed
 

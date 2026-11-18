@@ -14,14 +14,52 @@ VENV = ROOT / ".venv"
 PY = VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
-def run(cmd: list, check: bool = True) -> int:
+def run(cmd: list, check: bool = True, cwd: Path | None = None) -> int:
     print("> " + " ".join(str(c) for c in cmd), flush=True)
-    return subprocess.run([str(c) for c in cmd], check=check).returncode
+    return subprocess.run([str(c) for c in cmd], check=check, cwd=cwd).returncode
+
+
+def nvidia_gpu_name() -> str:
+    exe = shutil.which("nvidia-smi")
+    if not exe and os.name == "nt":
+        default = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "nvidia-smi.exe"
+        exe = str(default) if default.exists() else None
+    if not exe:
+        return ""
+    try:
+        out = subprocess.run([exe, "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, timeout=20)
+        return out.stdout.strip().splitlines()[0] if out.returncode == 0 and out.stdout.strip() else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
 
 
 def ffmpeg_found() -> bool:
     probe = [str(PY), "-c", "from clipper.media import find_ffmpeg; find_ffmpeg()"]
     return subprocess.run(probe, capture_output=True).returncode == 0
+
+
+OLD_DEFAULTS = (
+    "  model: small              # tiny / base / small / medium / large-v3: bigger = more accurate but slower.\n"
+    "                            # 'medium' is noticeably better for Hindi.\n"
+    "  device: cpu               # cpu, or cuda if you have an NVIDIA GPU with CUDA 12 + cuDNN 9 installed\n"
+)
+NEW_DEFAULTS = (
+    "  model: auto               # auto = large-v3 on an NVIDIA GPU, small on the CPU.\n"
+    "                            # Or pick: tiny / base / small / medium / large-v3 (bigger = more accurate, slower)\n"
+    "  device: auto              # auto = use the NVIDIA GPU if it passes a one-time test, else the CPU. Or: cpu / cuda\n"
+    "  gemini:                   # optional, free: Gemini double-checks the words (the local model keeps the timing)\n"
+    "    api_key: \"\"             # free key from aistudio.google.com; create it in a project WITHOUT billing\n"
+)
+
+
+def upgrade_config(path: Path) -> bool:
+    """Older setups copied 'model: small / device: cpu'. Switch those untouched defaults to auto (GPU when
+    possible) and add the Gemini key line. Lines the user changed are left alone."""
+    text = path.read_text(encoding="utf-8")
+    if OLD_DEFAULTS not in text or "gemini:" in text:
+        return False
+    path.write_text(text.replace(OLD_DEFAULTS, NEW_DEFAULTS), encoding="utf-8")
+    return True
 
 
 def main() -> int:
@@ -36,7 +74,13 @@ def main() -> int:
         print("Creating a private Python environment in .venv (one time)...")
         venv.EnvBuilder(with_pip=True).create(VENV)
     run([PY, "-m", "pip", "install", "--upgrade", "pip"])
-    run([PY, "-m", "pip", "install", "-e", ROOT])
+    gpu = nvidia_gpu_name()
+    if gpu:
+        print(f"NVIDIA GPU found: {gpu}. Also installing NVIDIA's GPU library for speech recognition "
+              "(about 550 MB, one time).")
+        run([PY, "-m", "pip", "install", "-e", ".[gpu]"], cwd=ROOT)
+    else:
+        run([PY, "-m", "pip", "install", "-e", ROOT])
 
     if os.name == "nt":
         # PowerShell hands arguments to .cmd files unquoted, so a link containing '&' (e.g. ...&t=30s)
@@ -50,6 +94,8 @@ def main() -> int:
     if not config.exists():
         shutil.copy(ROOT / "config.example.yaml", config)
         print("Created config.yaml: your settings live there.")
+    elif upgrade_config(config):
+        print("Updated config.yaml: speech recognition now uses your GPU when possible (captions.device: auto).")
     (ROOT / "assets" / "music").mkdir(parents=True, exist_ok=True)
     (ROOT / "output" / "ready").mkdir(parents=True, exist_ok=True)
 

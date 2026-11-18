@@ -120,7 +120,7 @@ def test_hindi_clip_gets_english_letters_and_hindi_script_versions(cfg, tmp_path
 
     hindi = ["भाई", "देख", "पुलिस", "आ", "गई।", "भागो", "यार", "जल्दी", "निकल।"]
 
-    def fake_hindi(audio, c, language=None):
+    def fake_hindi(audio, c, language=None, **kwargs):
         total, t, words = len(audio) / 16000, 1.0, []
         i = 0
         while t + 0.5 < total:
@@ -145,3 +145,46 @@ def test_hindi_clip_gets_english_letters_and_hindi_script_versions(cfg, tmp_path
 
     only_latin = make(str(src), MakeOptions(start=20, end=42, hook="X", music="none", prompt=False, hindi_script="latin", force=True), cfg)[0]
     assert not (only_latin / "clip_devanagari.mp4").exists()
+
+
+def test_gemini_words_replace_misheard_ones_and_failures_fall_back(cfg, tmp_path, monkeypatch):
+    from clipper import gemini
+    from clipper.transcribe import Transcript, Word
+
+    local = ["भाई", "मेरा", "फ्रेंड", "आ", "गया"]  # what the local model heard ("friend" written in Hindi script)
+
+    def fake_local(audio, c, language=None, **kwargs):
+        total, words, t, i = len(audio) / 16000, [], 1.0, 0
+        while t + 0.5 < total:
+            words.append(Word(t, t + 0.4, local[i % len(local)], 0.9))
+            t, i = t + 0.5, i + 1
+        return Transcript(language="hi", probability=0.9, words=words, engine="small on CPU (int8)")
+
+    def fake_gemini(clip_audio, gcfg, sr=16000):
+        n = int(len(clip_audio) / 16000 / 0.5) + 2
+        pairs = [("भाई", "bhai"), ("मेरा", "mera"), ("फ्रेंड", "friend"), ("आ", "aa"), ("गया", "gaya")]
+        return gemini.GeminiWords("hi", [pairs[i % 5] for i in range(n)], "gemini-flash-latest")
+
+    monkeypatch.setattr("clipper.pipeline.transcribe", fake_local)
+    monkeypatch.setattr("clipper.pipeline.gemini.transcribe_clip", fake_gemini)
+    monkeypatch.setattr(gemini, "_PAUSED_UNTIL", 0.0)
+    cfg.captions.gemini.api_key = "test-key"
+    cfg.render.keep_work_files = True
+    src = make_video(tmp_path / "talk.mp4", duration=50, burst_at=25.0)
+    folder = make(str(src), MakeOptions(start=15, end=37, hook="X", music="none", prompt=False, hindi_script="latin"), cfg)[0]
+    meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    assert meta["captions"]["words_from"] == "gemini:gemini-flash-latest"
+    ass = next((cfg.root / "cache" / "work").iterdir()) / "clip.ass"
+    text = ass.read_text(encoding="utf-8")
+    assert "FRIEND" in text and "PHREND" not in text
+
+    def broken(clip_audio, gcfg, sr=16000):
+        raise gemini.GeminiError("quota", "free quota used up (limit: 20)")
+
+    monkeypatch.setattr("clipper.pipeline.gemini.transcribe_clip", broken)
+    shutil.rmtree(cfg.root / "cache" / "work")
+    folder = make(str(src), MakeOptions(start=15, end=37, hook="X", music="none", prompt=False, hindi_script="latin", force=True), cfg)[0]
+    meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    assert meta["captions"]["words_from"] == "local" and "free quota used up" in meta["captions"]["gemini_note"]
+    assert "PHREND" in (next((cfg.root / "cache" / "work").iterdir()) / "clip.ass").read_text(encoding="utf-8")
+    assert (folder / "clip.mp4").exists()

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import __version__, audio, captions, db, media, package, render, sponsorblock
+from . import __version__, align, audio, captions, db, gemini, media, package, render, sponsorblock
 from .analysis import envelope_db, pseudo_heatmap
 from .config import Config, validate
 from .download import cut_local, download_audio, download_segment
@@ -36,6 +36,7 @@ class MakeOptions:
     music: str | None = None  # None = random track from the music folder, "none", or a file path
     lang: str | None = None  # None/"auto" = detect among config languages, or "en" / "hi"
     hindi_script: str | None = None  # both | latin | devanagari (None = use config)
+    gemini: bool | None = None  # False = don't ask Gemini even if a key is set
     translate: bool | None = None
     captions: bool | None = None
     credit: bool | None = None
@@ -153,17 +154,48 @@ def choose_moments(video: VideoInfo, local: Path | None, cfg: Config, opts: Make
     return moments
 
 
-def caption_variants(words: list[Word], transcript: Transcript, hindi_script: str) -> list[tuple[str, str, list[Word]]]:
+@dataclass
+class BetterWords:
+    """Caption words from Gemini, already placed on the local model's timings."""
+
+    language: str
+    native: list[Word]  # normal script (Hindi in Devanagari)
+    latin: list[Word]  # English letters
+    model: str
+
+
+def caption_variants(
+    words: list[Word], transcript: Transcript, hindi_script: str, better: BetterWords | None = None
+) -> list[tuple[str, str, list[Word]]]:
     """[(file name, script, words)]. The first one becomes clip.mp4. Hindi speech can be captioned in
     English letters ("latin"), Hindi script ("devanagari"), or both (a second video file)."""
-    if transcript.language != "hi" or transcript.translated or not words:
-        return [("clip", "", words)]
-    latin = [Word(w.start, w.end, to_latin(w.text), w.prob) for w in words]
+    if better is not None and not transcript.translated:
+        language, native, latin = better.language, better.native, better.latin
+    else:
+        language, native = transcript.language, words
+        latin = [Word(w.start, w.end, to_latin(w.text), w.prob) for w in words]
+    if language != "hi" or transcript.translated or not native:
+        return [("clip", "", native)]
     if hindi_script == "devanagari":
-        return [("clip", "devanagari", words)]
+        return [("clip", "devanagari", native)]
     if hindi_script == "latin":
         return [("clip", "latin", latin)]
-    return [("clip", "latin", latin), ("clip_devanagari", "devanagari", words)]
+    return [("clip", "latin", latin), ("clip_devanagari", "devanagari", native)]
+
+
+def ask_gemini(clip_audio: np.ndarray, clip_words: list[Word], cfg: Config) -> tuple[BetterWords | None, str]:
+    """Gemini's words on the local timings, or (None, reason) to keep the local words."""
+    try:
+        result = gemini.transcribe_clip(clip_audio, cfg.captions.gemini)
+    except gemini.GeminiError as exc:
+        return None, f"Gemini not used, kept the local words: {exc}"
+    keys = [align.key(latin) for _text, latin in result.words]
+    native = align.align([text for text, _latin in result.words], keys, clip_words)
+    latin = align.align([latin for _text, latin in result.words], keys, clip_words)
+    if native is None or latin is None:
+        return None, "Gemini's words didn't line up with the speech, kept the local words"
+    language = "hi" if result.language in ("hi", "ur") else result.language
+    return BetterWords(language, native, latin, result.model), f"caption words from Gemini ({result.model})"
 
 
 def _describe(m: Moment) -> str:
@@ -224,11 +256,14 @@ def make_clip(
 
         transcript = Transcript(note="captions turned off")
         if cfg.captions.enabled and seg.has_audio:
-            with rep.step(f"Listening for speech to make captions ({cfg.captions.model} model)"):
+            with rep.step("Listening for speech to make captions (first run: downloads the model, tests the GPU)"):
                 language = None if opts.lang in (None, "", "auto") else opts.lang
-                transcript = transcribe(mono, cfg.captions, language=language)
+                transcript = transcribe(mono, cfg.captions, language=language, cache_dir=cache)
             if transcript.words:
-                rep.info(f"Captions: {len(transcript.words)} words, language '{transcript.language}'" + (" (translated to English)" if transcript.translated else ""))
+                rep.info(f"Captions: {len(transcript.words)} words, language '{transcript.language}', {transcript.engine}"
+                         + (" (translated to English)" if transcript.translated else ""))
+                if transcript.note and transcript.note != "no NVIDIA GPU found":  # a GPU exists but couldn't be used
+                    rep.warn(f"Speech model is on the CPU: {transcript.note}")
             else:
                 rep.info(f"Captions: none ({transcript.note or 'no words recognised'})")
 
@@ -243,7 +278,13 @@ def make_clip(
             for w in transcript.words
             if w.end > s + 0.05 and w.start < e - 0.05
         ]
-        variants = caption_variants(clip_words, transcript, cfg.captions.hindi_script)
+        better, gemini_note = None, ""
+        use_gemini = cfg.captions.enabled and clip_words and not transcript.translated and opts.gemini is not False
+        if use_gemini and gemini.available(cfg.captions.gemini):
+            with rep.step("Asking Gemini (free tier) to check the caption words"):
+                better, gemini_note = ask_gemini(mono[int(s * 16000) : int(e * 16000)], clip_words, cfg)
+            (rep.info if better else rep.warn)(gemini_note)
+        variants = caption_variants(clip_words, transcript, cfg.captions.hindi_script, better)
         clip_text = " ".join(w.text for w in variants[0][2])
         source_start, source_end = dl_start + s, dl_start + e
 
@@ -276,10 +317,12 @@ def make_clip(
             mixed = audio.prepare_audio(segment, seg.has_audio, s, e, clip_words, track, cfg.music, cfg.render, work)
 
         folder = package.new_clip_folder(cfg.path(cfg.output_dir), slugify(hook or video.title, 40, slugify(video.id, 20, "clip")))
+        encoders = []
         with rep.step("Rendering the Short" + (f" ({len(variants)} versions)" if len(variants) > 1 else "")):
             for name, _script, _words in variants:
                 out = folder / f"{name}.mp4"
-                render.render_video(segment, s, e, layout, work, mixed.mixed, out, cfg.render, seg.fps, ass_name=f"{name}.ass")
+                encoders.append(render.render_video(segment, s, e, layout, work, mixed.mixed, out, cfg.render, seg.fps,
+                                                    ass_name=f"{name}.ass"))
                 if mixed.track and cfg.music.export_without_music:
                     render.replace_audio(out, mixed.game, folder / f"{name}_nomusic.mp4")
             render.thumbnail(folder / "clip.mp4", refined.payoff - s, folder / "thumb.jpg")
@@ -289,7 +332,7 @@ def make_clip(
         tags = package.hashtags_for(game_cfg, cfg.default_hashtags)
         titles = package.title_options(hook, game_cfg, cfg.title_templates, tags)
         desc = package.description(hook, video, source_start, mixed.track.credit if mixed.track else None, tags, credit is not None)
-        notes = list(refined.notes)
+        notes = list(refined.notes) + ([gemini_note] if gemini_note else [])
         scripts = [script for _name, script, _words in variants if script]
         if scripts == ["latin", "devanagari"]:
             notes.append("Two versions: clip.mp4 has Hindi in English letters, clip_devanagari.mp4 has Hindi script.")
@@ -317,9 +360,11 @@ def make_clip(
                 "enabled": cfg.captions.enabled, "language": transcript.language,
                 "probability": round(transcript.probability, 3), "translated": transcript.translated,
                 "words": len(clip_words), "note": transcript.note, "model": cfg.captions.model,
-                "hindi_scripts": scripts,
+                "hindi_scripts": scripts, "engine": transcript.engine,
+                "words_from": f"gemini:{better.model}" if better else "local", "gemini_note": gemini_note,
             },
             "layout": {"name": layout.name, "zoom": cfg.style.zoom},
+            "video_encoder": encoders[0] if encoders else None,
             "music": None if not mixed.track else {
                 "file": mixed.track.path.name, "credit": mixed.track.credit,
                 "start_in_track": round(mixed.music_offset, 2), "gain_db": round(mixed.music_gain_db, 2),
