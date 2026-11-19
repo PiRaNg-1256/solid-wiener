@@ -18,12 +18,12 @@ from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
 
-from . import __version__, gemini, gpu, media, render, sponsorblock
+from . import __version__, gemini, gpu, media, render, sheet, sponsorblock
 from .audio import list_tracks
 from .config import load_config
 from .metadata import fetch_info
 from .moments import find_moments, heatmap_arrays, mask_buckets
-from .pipeline import HookContext, MakeOptions, Reporter, make as run_make
+from .pipeline import HookContext, MakeOptions, Reporter, make as run_make, render_clip
 from .transcribe import model_is_downloaded
 from .util import ClipperError, fmt_time, normalize_url, parse_time
 
@@ -61,10 +61,14 @@ class RichReporter(Reporter):
             for i, idea in enumerate(ctx.suggestions, 1):
                 console.print(f"  {i}) {escape(idea)}")
         answer = Prompt.ask(
-            "Hook text for the top of the Short (type it, or a number to use an idea, Enter for none; | = new line)",
+            "Hook text (Enter = idea 1, a number = that idea, - = no hook, or type your own; | = new line)",
             default="",
             show_default=False,
         ).strip()
+        if not answer:
+            return ctx.suggestions[0] if ctx.suggestions else ""
+        if answer == "-":
+            return ""
         if answer.isdigit() and 1 <= int(answer) <= len(ctx.suggestions):
             return ctx.suggestions[int(answer) - 1]
         return answer
@@ -92,6 +96,7 @@ def make(
     force: bool = typer.Option(False, "--force", help="Make it even if you already clipped this part"),
     no_prompt: bool = typer.Option(False, "--no-prompt", help="Don't ask for hook text"),
     refresh: bool = typer.Option(False, "--refresh", help="Re-read the video info instead of using the saved copy"),
+    review: bool = typer.Option(False, "--review", help="Stop after the captions so you can edit them; then: clipper render"),
     config: Optional[Path] = typer.Option(None, help="Use a different settings file"),
 ) -> None:
     cfg = load_config(config)
@@ -113,6 +118,7 @@ def make(
         force=force,
         prompt=not no_prompt and sys.stdin.isatty(),
         refresh=refresh,
+        review=review,
     )
     if opts.end is not None and opts.start is None:
         raise ClipperError("--end only works together with --start.")
@@ -120,13 +126,51 @@ def make(
     if not folders:
         console.print("[yellow]No new clips were made.[/yellow]")
         return
-    console.rule("Done")
+    console.rule("Captions ready to check" if review else "Done")
     for folder in folders:
         console.print(f"[green]✓[/green] {escape(str(folder))}")
-    console.print(
-        "Watch each clip, then move the good ones into [bold]output/ready[/bold] and post from there. "
-        "Titles and description are in post.txt."
-    )
+    if review:
+        console.print("Fix the words in captions.srt and the hook in hook.txt, then make the videos with:")
+        console.print('  clipper render "<clip folder>"')
+    else:
+        console.print("Watch each clip.mp4. Titles and description to paste are in post.txt.")
+
+
+@app.command(help="Make the videos of clip folders prepared earlier (after you edited captions.srt / hook.txt).")
+def render(
+    folders: list[Path] = typer.Argument(..., help="One or more clip folders"),
+    config: Optional[Path] = typer.Option(None, help="Use a different settings file"),
+) -> None:
+    cfg = load_config(config)
+    reporter = RichReporter()
+    for folder in folders:
+        video = render_clip(folder, cfg, reporter)
+        console.print(f"[green]✓[/green] {escape(str(video))}")
+
+
+@app.command(help="Work through clips.xlsx: new rows get captions, rows set to Ready get their videos made.")
+def run(
+    sheet_file: Optional[Path] = typer.Option(None, "--sheet", help="Use a different Excel file"),
+    config: Optional[Path] = typer.Option(None, help="Use a different settings file"),
+) -> None:
+    cfg = load_config(config)
+    path = sheet_file or cfg.path(cfg.sheet.file)
+    existed = path.exists()
+    summary = sheet.run(cfg, RichReporter(), path)
+    if not existed:
+        console.print(f"[green]Created {escape(str(path))}[/green]. Open it, put video links in (one per row), "
+                      "save and close it, then run this again. The 'How to use' tab explains every column.")
+        return
+    console.rule("Finished")
+    console.print(f"Clips with captions to check: {summary.prepared}   Videos made: {summary.rendered}   "
+                  f"Rows failed: {summary.failed}")
+    for line in summary.rows:
+        console.print(f"  {escape(line)}")
+    if summary.waiting:
+        console.print(f"{summary.waiting} row(s) say 'Edit captions': fix captions.srt / hook.txt in their clip "
+                      "folders, set Status to Ready, save and close the sheet, and run again.")
+    if summary.failed:
+        console.print("Failed rows show the reason in the Status column. Fix it, clear the Status, and run again.")
 
 
 BARS = " ▁▂▃▄▅▆▇█"
@@ -273,9 +317,12 @@ def doctor(
         if media.ffmpeg_has("encoders", "libx264"):
             chosen = render.pick_encoder(cfg.render)
             add("Video encoding", True, f"{chosen} ({names.get(chosen, chosen)})", required=False)
+        sheet_path = cfg.path(cfg.sheet.file)
+        add("Excel sheet", True, str(sheet_path) if sheet_path.exists() else f"{cfg.sheet.file} (created on the first run)",
+            required=False)
         key_set = bool(gemini.api_key(cfg.captions.gemini))
         add("Gemini (optional)", True, "key set: run  clipper gemini-test  to check your free quota" if key_set
-            else "not set: captions use only the local model", required=False)
+            else "not set: paste a free key into gemini_api_key at the top of config.yaml", required=False)
         out = cfg.path(cfg.output_dir)
         try:
             out.mkdir(parents=True, exist_ok=True)

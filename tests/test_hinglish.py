@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from clipper.hinglish import to_latin, word_to_latin
-from clipper.pipeline import caption_variants
+from clipper.pipeline import caption_words
 from clipper.transcribe import Transcript, Word
 
 
@@ -43,15 +43,13 @@ def test_both_ways_of_writing_nukta_letters_match():
     assert word_to_latin(precomposed) == word_to_latin(combined) == "zyada"
 
 
-def test_caption_variants_follow_the_setting():
+def test_hindi_captions_use_english_letters_unless_devanagari_is_chosen():
     hindi = Transcript(language="hi", words=[Word(0, 0.5, "भाई"), Word(0.6, 1.0, "देख")])
-    words = hindi.words
-    both = caption_variants(words, hindi, "both")
-    assert [(n, s) for n, s, _ in both] == [("clip", "latin"), ("clip_devanagari", "devanagari")]
-    assert [w.text for w in both[0][2]] == ["bhai", "dekh"] and both[1][2] is words
-    assert [s for _, s, _ in caption_variants(words, hindi, "latin")] == ["latin"]
-    assert [s for _, s, _ in caption_variants(words, hindi, "devanagari")] == ["devanagari"]
+    script, words = caption_words(hindi.words, hindi, "latin")
+    assert script == "latin" and [w.text for w in words] == ["bhai", "dekh"]
+    script, words = caption_words(hindi.words, hindi, "devanagari")
+    assert script == "devanagari" and words is hindi.words
     english = Transcript(language="en", words=[Word(0, 0.5, "hello")])
-    assert caption_variants(english.words, english, "both") == [("clip", "", english.words)]
+    assert caption_words(english.words, english, "latin") == ("", english.words)
     translated = Transcript(language="hi", words=[Word(0, 0.5, "brother")], translated=True)
-    assert len(caption_variants(translated.words, translated, "both")) == 1
+    assert caption_words(translated.words, translated, "latin") == ("", translated.words)

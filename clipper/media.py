@@ -173,6 +173,14 @@ def write_wav(path: str | Path, samples: np.ndarray, sr: int) -> None:
     wavfile.write(str(path), sr, np.asarray(samples, dtype=np.float32))
 
 
+def frame_jpeg(path: str | Path, at: float, width: int = 512) -> bytes:
+    """One frame as a small JPEG (for Gemini to see what happens). Empty bytes if it fails."""
+    cmd = [ffmpeg_bin(), "-hide_banner", "-nostdin", "-v", "error", "-ss", f"{max(0.0, at):.3f}", "-i", str(path),
+           "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "6", "-f", "image2pipe", "-vcodec", "mjpeg", "-"]
+    proc = subprocess.run(cmd, capture_output=True)
+    return proc.stdout if proc.returncode == 0 else b""
+
+
 _SCENE_RE = re.compile(r"lavfi\.scd\.score:\s*([0-9.]+),?\s*lavfi\.scd\.time:\s*([0-9.]+)")
 
 

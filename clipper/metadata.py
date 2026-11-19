@@ -29,6 +29,7 @@ class VideoInfo:
     chapters: list[dict] = field(default_factory=list)
     fetched_at: float = 0.0
     local_path: str = ""  # set for local files instead of YouTube links
+    was_live: bool = False  # a finished livestream (has a live-chat replay)
 
     @property
     def creator(self) -> str:
@@ -119,6 +120,7 @@ def _from_raw(raw: dict, url: str) -> VideoInfo:
             for c in raw.get("chapters") or []
         ],
         fetched_at=time.time(),
+        was_live=raw.get("live_status") == "was_live" or bool(raw.get("was_live")),
     )
 
 

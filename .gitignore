@@ -10,3 +10,4 @@ config.yaml
 assets/music/*
 !assets/music/README.md
 clipper.exe
+clips (results*.xlsx

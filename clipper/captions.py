@@ -149,8 +149,133 @@ def _hook_text(hook: str, style: StyleConfig, font: Font) -> tuple[str, str]:
     return r"\N".join(parts), override
 
 
+@dataclass
+class CaptionLine:
+    """One caption on screen: 1-3 words shown together, each word highlighted while it's spoken."""
+
+    start: float
+    end: float
+    words: list[Word]
+
+    @property
+    def text(self) -> str:
+        return " ".join(w.text for w in self.words)
+
+
+def make_lines(words: list[Word], style: StyleConfig, fonts_dir: Path, duration: float) -> list[CaptionLine]:
+    """Group timed words into caption lines (text kept in normal case; the renderer uppercases)."""
+    font = Font(fonts_dir / style.font_file)
+    shown: list[CaptionWord] = []
+    for w in words:
+        display = clean_word(w.text, uppercase=False)
+        if display and w.end > 0 and w.start < duration:
+            shown.append(CaptionWord(max(0.0, w.start), min(duration, w.end), w.text, display))
+
+    def fits(chunk: list[CaptionWord]) -> bool:
+        text = " ".join(clean_word(w.display, style.caption_uppercase) for w in chunk)
+        return len(chunk) == 1 or font.width(text, style.caption_size) * 1.06 <= CAPTION_MAX_WIDTH
+
+    chunks = chunk_words(shown, max(1, style.caption_max_words), fits)
+    lines = []
+    for ci, chunk in enumerate(chunks):
+        end = chunk[-1].end + 0.4
+        if ci + 1 < len(chunks):
+            end = min(end, chunks[ci + 1][0].start)
+        end = max(min(end, duration), chunk[-1].end)
+        lines.append(CaptionLine(chunk[0].start, end, [Word(w.start, w.end, w.display) for w in chunk]))
+    return lines
+
+
+# ---------- editable captions file (.srt) ----------
+
+def _srt_time(t: float) -> str:
+    ms = max(0, int(round(t * 1000)))
+    h, rest = divmod(ms, 3_600_000)
+    m, rest = divmod(rest, 60_000)
+    sec, ms = divmod(rest, 1000)
+    return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+
+
+def write_srt(lines: list[CaptionLine], path: Path) -> None:
+    blocks = [f"{i}\n{_srt_time(line.start)} --> {_srt_time(line.end)}\n{line.text}\n" for i, line in enumerate(lines, 1)]
+    path.write_text("\n".join(blocks), encoding="utf-8")
+
+
+_SRT_TIME = re.compile(r"(\d+):(\d{1,2}):(\d{1,2})[,.](\d{1,3})")
+
+
+def _parse_srt_time(text: str) -> float:
+    m = _SRT_TIME.fullmatch(text.strip())
+    if not m:
+        raise ValueError(text)
+    h, mi, sec, ms = m.groups()
+    return int(h) * 3600 + int(mi) * 60 + int(sec) + int(ms.ljust(3, "0")) / 1000
+
+
+def read_srt(path: Path) -> list[tuple[float, float, str]]:
+    """(start, end, text) for every caption; tolerant of Notepad quirks (BOM, Windows line endings, no numbers)."""
+    from .util import ClipperError
+
+    text = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
+    entries = []
+    for number, block in enumerate(re.split(r"\n\s*\n", text.strip()), 1):
+        rows = [r for r in block.split("\n") if r.strip()]
+        if rows and rows[0].strip().isdigit():
+            rows = rows[1:]
+        if not rows:
+            continue
+        if "-->" not in rows[0]:
+            raise ClipperError(f"{path.name}, caption {number}: the first line must be like 00:00:01,200 --> 00:00:02,500")
+        left, right = rows[0].split("-->", 1)
+        try:
+            start, end = _parse_srt_time(left), _parse_srt_time(right)
+        except ValueError:
+            raise ClipperError(f"{path.name}, caption {number}: can't read the time '{rows[0].strip()}'") from None
+        if end <= start:
+            raise ClipperError(f"{path.name}, caption {number}: the end time must be after the start time")
+        words = " ".join(r.strip() for r in rows[1:]).strip()
+        if words:
+            entries.append((start, end, words))
+    return sorted(entries)
+
+
+def lines_from_srt(entries: list[tuple[float, float, str]], previous: list[CaptionLine]) -> list[CaptionLine]:
+    """Turn edited captions back into timed words. A line with the same number of words as the original line
+    it overlaps keeps each word's timing (stretched if you moved the line); otherwise words share the time."""
+    lines = []
+    same_count = len(entries) == len(previous)  # no lines added or removed: match each line to its original
+    for index, (start, end, text) in enumerate(entries):
+        tokens = text.split()
+        if same_count:
+            best = previous[index]
+        else:  # lines were added or removed: match by time instead
+            best, best_overlap = None, 0.0
+            for old in previous:
+                overlap = min(end, old.end) - max(start, old.start)
+                if overlap > best_overlap:
+                    best, best_overlap = old, overlap
+            if best_overlap < 0.3 * (end - start):
+                best = None
+        words: list[Word] = []
+        if best is not None and len(best.words) == len(tokens) and best.end > best.start:
+            scale = (end - start) / (best.end - best.start)
+            for w, token in zip(best.words, tokens):
+                a = start + (w.start - best.start) * scale
+                b = start + (w.end - best.start) * scale
+                words.append(Word(min(max(a, start), end), min(max(b, start), end), token))
+        else:
+            weights = [len(t) + 2 for t in tokens]
+            total, t = sum(weights), start
+            for token, weight in zip(tokens, weights):
+                span = (end - start) * weight / total
+                words.append(Word(t, t + span, token))
+                t += span
+        lines.append(CaptionLine(start, end, words))
+    return lines
+
+
 def build_ass(
-    words: list[Word],
+    captions: list,
     *,
     layout: Layout,
     style: StyleConfig,
@@ -159,7 +284,7 @@ def build_ass(
     hook: str | None = None,
     credit: str | None = None,
 ) -> str:
-    """Words must already be relative to the start of the clip."""
+    """captions: caption lines, or plain timed words (grouped into lines here). Times are relative to the clip."""
     font = Font(fonts_dir / style.font_file)
     credit_font = Font(fonts_dir / style.credit_font_file)
     base = hex_to_ass(style.caption_color)
@@ -175,37 +300,25 @@ def build_ass(
     if credit and credit.strip():
         events.append(f"Dialogue: 0,{ass_time(0)},{ass_time(duration)},Credit,,0,0,0,,{escape(strip_emoji(credit))}")
 
-    shown: list[CaptionWord] = []
-    for w in words:
-        display = clean_word(w.text, style.caption_uppercase)
-        if display and w.end > 0 and w.start < duration:
-            shown.append(CaptionWord(max(0.0, w.start), min(duration, w.end), w.text, display))
-
-    def line_width(chunk: list[CaptionWord], px: float) -> float:
-        return font.width(" ".join(w.display for w in chunk), px) * 1.06  # room for the highlighted word's pop
-
-    def fits(chunk: list[CaptionWord]) -> bool:
-        return len(chunk) == 1 or line_width(chunk, style.caption_size) <= CAPTION_MAX_WIDTH
-
-    chunks = chunk_words(shown, max(1, style.caption_max_words), fits)
-    for ci, chunk in enumerate(chunks):
-        chunk_start = chunk[0].start
-        chunk_end = chunk[-1].end + 0.4
-        if ci + 1 < len(chunks):
-            chunk_end = min(chunk_end, chunks[ci + 1][0].start)
-        chunk_end = min(chunk_end, duration)
-        width = line_width(chunk, style.caption_size)
+    lines = captions if captions and isinstance(captions[0], CaptionLine) else make_lines(captions, style, fonts_dir, duration)
+    for line in lines:
+        if line.start >= duration or not line.words:
+            continue
+        shown = [clean_word(w.text, style.caption_uppercase) or w.text for w in line.words]
+        width = font.width(" ".join(shown), style.caption_size) * 1.06
         size_tag = ""
-        if width > CAPTION_MAX_WIDTH:  # a single very long word: shrink it to fit
+        if width > CAPTION_MAX_WIDTH and len(shown) == 1:  # a single very long word: shrink it to fit
             size_tag = rf"\fs{font.ass_size(style.caption_size * CAPTION_MAX_WIDTH / width)}"
-        for wi, word in enumerate(chunk):
-            start = chunk_start if wi == 0 else word.start
-            end = chunk[wi + 1].start if wi + 1 < len(chunk) else chunk_end
+        line_end = min(line.end, duration)
+        for wi, word in enumerate(line.words):
+            start = line.start if wi == 0 else max(line.start, word.start)
+            end = line.words[wi + 1].start if wi + 1 < len(line.words) else line_end
+            end = min(end, line_end)
             if end - start < 0.05:
                 continue
             pieces = []
-            for xi, other in enumerate(chunk):
-                t = escape(other.display)
+            for xi, text in enumerate(shown):
+                t = escape(text)
                 pieces.append(rf"{{\c{highlight}\fscx110\fscy110}}{t}{{\c{base}\fscx100\fscy100}}" if xi == wi else t)
             fade = r"\fad(80,0)" if wi == 0 else ""
             prefix = f"{{{fade}{size_tag}}}" if fade or size_tag else ""

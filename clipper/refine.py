@@ -94,8 +94,10 @@ def refine_window(
     seg_duration: float,
     cfg: ClipConfig,
     wide: bool = False,
+    manual: bool = False,
 ) -> Refined:
-    """All times are seconds inside the downloaded segment."""
+    """All times are seconds inside the downloaded segment. manual=True (times you typed): only nudge the cut by
+    about a second so no word is cut in half; never stretch or trim to the usual lengths."""
     notes: list[str] = []
     start, end = max(0.0, start), min(seg_duration, end)
     if wide:
@@ -106,6 +108,12 @@ def refine_window(
         notes.append(f"replay spike was wider than a Short: centred on the most intense part ({focus:.1f}s)")
 
     payoff = loudest_time(env_times, env_db, start, end, smooth=1.0)
+    if manual:
+        s, why_s = _snap_start(start, words, cuts, before=1.0, after=0.5)
+        e, why_e = _snap_end(end, words, cuts, before=0.5, after=1.0)
+        s, e = max(0.0, s), min(seg_duration, e)
+        notes.append(f"your times; start {why_s}, end {why_e}")
+        return Refined(start=round(s, 3), end=round(e, 3), payoff=round(min(max(payoff, s), e), 3), notes=notes)
     s, why_s = _snap_start(start, words, cuts)
     e, why_e = _snap_end(end, words, cuts)
     notes.append(f"start {why_s}, end {why_e}")

@@ -10,6 +10,7 @@ import base64
 import io
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -19,20 +20,30 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .config import GeminiConfig
+from .util import _EMOJI_RE as _EMOJI
+from .util import strip_emoji
 
 API = "https://generativelanguage.googleapis.com/v1beta"
 
-PROMPT = """This is a short clip from a gaming video. Transcribe the speech for on-screen captions.
+PROMPT = """This is a short clip from a gaming video that will become a YouTube Short. You get its audio and a few
+frames from it, in order.
+{context}
 
-Rules:
-- Write only words that are actually spoken (by the player or by game characters), in order. Don't add anything.
-- Skip song lyrics, music and sound effects. If nobody speaks, return an empty word list.
-- "language": the main spoken language as a two-letter code ("hi" for Hindi or Hinglish, "en" for English).
-- For each word give:
-  "text": the word in the script it is normally written in (Hindi words in Devanagari; English words in English),
-  "latin": the same word in English letters, spelled the way Indians type Hindi online (e.g. "bhai", "kya",
-  "nahi", "yaar"); English words in their normal English spelling. For English speech, "latin" equals "text".
-- Keep game names, place names and slang as they are spoken (GTA, Vice City, bro)."""
+Fill in:
+1. "language": the main spoken language as a two-letter code ("hi" for Hindi or Hinglish, "en" for English).
+2. "words": the speech for captions. Only words actually spoken (by the player or game characters), in order;
+   don't add anything. Skip song lyrics, music and sound effects. If nobody speaks, return an empty list.
+   For each word: "text" = the word in the script it is normally written in (Hindi in Devanagari, English in
+   English); "latin" = the same word in English letters, spelled the way Indians type Hindi online ("bhai",
+   "kya", "nahi", "yaar"), and English words in normal English spelling. Keep names and slang (GTA, Vice City, bro).
+3. "hook": the text shown at the top of the Short for the whole clip. At most 7 words. Make people want to keep
+   watching: tease or react to what happens, without giving away the ending. Be specific to what is seen and heard.
+   No emojis, hashtags or quotes. No graphic violence or gore words, and no spoilers of the game's story.
+   English, or Hindi in English letters if the speech is Hindi.
+4. "titles": three different YouTube title options, each under 70 characters, honest about what's in the clip.
+   At most one emoji each. No hashtags.
+5. "description": one or two short sentences for the video description. No hashtags, no links.
+6. "hashtags": up to 3 extra hashtags (starting with #) about the game or what happens."""
 
 SCHEMA = {
     "type": "OBJECT",
@@ -46,8 +57,12 @@ SCHEMA = {
                 "required": ["text", "latin"],
             },
         },
+        "hook": {"type": "STRING"},
+        "titles": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "description": {"type": "STRING"},
+        "hashtags": {"type": "ARRAY", "items": {"type": "STRING"}},
     },
-    "required": ["language", "words"],
+    "required": ["language", "words", "hook", "titles", "description"],
 }
 
 
@@ -63,6 +78,10 @@ class GeminiWords:
     words: list[tuple[str, str]]  # (text in normal script, text in English letters)
     model: str
     notes: list[str] = field(default_factory=list)
+    hook: str = ""
+    titles: list[str] = field(default_factory=list)
+    description: str = ""
+    hashtags: list[str] = field(default_factory=list)
 
 
 _PAUSED_UNTIL = 0.0  # after "quota used up", stop asking for a while instead of wasting a request per clip
@@ -136,7 +155,28 @@ def parse_reply(reply: dict, model: str) -> GeminiWords:
         latin = str(item.get("latin", "")).strip() or original
         if original:
             words.extend(_split(original, latin))
-    return GeminiWords(str(data.get("language", "")).lower()[:5], words, model)
+    hook = strip_emoji(re.sub(r"#\w+", "", str(data.get("hook") or ""))).strip().strip("\"'“”").strip()[:70]
+    titles = [strip_emoji_but_one(str(t)).strip()[:90] for t in data.get("titles") or [] if str(t).strip()][:3]
+    description = re.sub(r"https?://\S+|#\w+", "", str(data.get("description") or "")).strip()[:400]
+    hashtags = []
+    for tag in data.get("hashtags") or []:
+        tag = "#" + re.sub(r"[^\w]", "", str(tag).lstrip("#"))
+        if len(tag) > 1 and tag.lower() not in {h.lower() for h in hashtags}:
+            hashtags.append(tag)
+    return GeminiWords(str(data.get("language", "")).lower()[:5], words, model, hook=hook, titles=titles,
+                       description=description, hashtags=hashtags[:3])
+
+
+def strip_emoji_but_one(text: str) -> str:
+    """Titles may keep emoji, but not a wall of them."""
+    found = 0
+
+    def keep_first(m):
+        nonlocal found
+        found += 1
+        return m.group(0)[0] if found == 1 else ""
+
+    return re.sub(r"\s{2,}", " ", _EMOJI.sub(keep_first, text))
 
 
 def _split(original: str, latin: str) -> list[tuple[str, str]]:
@@ -147,8 +187,10 @@ def _split(original: str, latin: str) -> list[tuple[str, str]]:
     return [(original, latin)]
 
 
-def transcribe_clip(audio: np.ndarray, cfg: GeminiConfig, sr: int = 16000) -> GeminiWords:
-    """Try each configured free model in turn. Raises GeminiError if none of them gives a usable answer."""
+def transcribe_clip(audio: np.ndarray, cfg: GeminiConfig, sr: int = 16000, frames: list[bytes] = (),
+                    context: str = "") -> GeminiWords:
+    """Words, hook, titles and description for one clip, in a single request (the free tier counts requests).
+    Tries each configured free model in turn; raises GeminiError if none gives a usable answer."""
     global _PAUSED_UNTIL
     key = api_key(cfg)
     if not key:
@@ -158,7 +200,8 @@ def transcribe_clip(audio: np.ndarray, cfg: GeminiConfig, sr: int = 16000) -> Ge
     body = {
         "contents": [{"role": "user", "parts": [
             {"inline_data": {"mime_type": "audio/wav", "data": wav_base64(audio, sr)}},
-            {"text": PROMPT},
+            *[{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(f).decode("ascii")}} for f in frames],
+            {"text": PROMPT.format(context=context.strip())},
         ]}],
         "generationConfig": {"temperature": 0, "responseMimeType": "application/json", "responseSchema": SCHEMA},
         "safetySettings": [

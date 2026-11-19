@@ -47,8 +47,6 @@ NEW_DEFAULTS = (
     "  model: auto               # auto = large-v3 on an NVIDIA GPU, small on the CPU.\n"
     "                            # Or pick: tiny / base / small / medium / large-v3 (bigger = more accurate, slower)\n"
     "  device: auto              # auto = use the NVIDIA GPU if it passes a one-time test, else the CPU. Or: cpu / cuda\n"
-    "  gemini:                   # optional, free: Gemini double-checks the words (the local model keeps the timing)\n"
-    "    api_key: \"\"             # free key from aistudio.google.com; create it in a project WITHOUT billing\n"
 )
 
 
@@ -56,7 +54,7 @@ def upgrade_config(path: Path) -> bool:
     """Older setups copied 'model: small / device: cpu'. Switch those untouched defaults to auto (GPU when
     possible) and add the Gemini key line. Lines the user changed are left alone."""
     text = path.read_text(encoding="utf-8")
-    if OLD_DEFAULTS not in text or "gemini:" in text:
+    if OLD_DEFAULTS not in text:
         return False
     path.write_text(text.replace(OLD_DEFAULTS, NEW_DEFAULTS), encoding="utf-8")
     return True
@@ -97,6 +95,8 @@ def main() -> int:
     elif upgrade_config(config):
         print("Updated config.yaml: speech recognition now uses your GPU when possible (captions.device: auto).")
     (ROOT / "assets" / "music").mkdir(parents=True, exist_ok=True)
+    if not (ROOT / "clips.xlsx").exists():
+        run([PY, "-m", "clipper", "run"], check=False)  # creates clips.xlsx (with a 'How to use' tab)
     (ROOT / "output" / "ready").mkdir(parents=True, exist_ok=True)
 
     if not ffmpeg_found():
@@ -111,8 +111,10 @@ def main() -> int:
 
     print()
     run([PY, "-m", "clipper", "doctor"], check=False)
-    print("\nSetup finished. Next: put some music in assets\\music, then try:")
-    print('  clipper peaks "https://www.youtube.com/watch?v=..."')
+    print("\nSetup finished. Next:")
+    print("  1. Optional: paste your free Gemini key into gemini_api_key at the top of config.yaml")
+    print("  2. Put some music in assets\\music")
+    print("  3. Put video links in clips.xlsx, save and close it, then double-click run.cmd")
     return 0
 
 

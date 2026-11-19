@@ -61,9 +61,12 @@ def description(
     music_credit: str | None,
     tags: list[str],
     credit_on: bool,
+    summary: str = "",
 ) -> str:
     lines = []
-    if hook:
+    if summary:
+        lines += [summary.strip(), ""]
+    elif hook:
         lines += [re.sub(r"\s*\|\s*", " ", hook).strip(), ""]
     if credit_on and not video.is_local:
         lines.append(f"🎮 Footage: {video.creator} → {video.link_at(source_start)}")
@@ -73,17 +76,46 @@ def description(
     return "\n".join(lines).strip() + "\n"
 
 
-def new_clip_folder(output_root: Path, slug: str, when: datetime | None = None) -> Path:
-    day = output_root / "review" / (when or datetime.now()).strftime("%Y-%m-%d")
-    day.mkdir(parents=True, exist_ok=True)
-    numbers = [int(p.name[:3]) for p in day.iterdir() if p.is_dir() and p.name[:3].isdigit()]
-    folder = day / f"{max(numbers, default=0) + 1:03d}_{slug}"
-    folder.mkdir()
+_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+
+
+def safe_name(text: str, max_len: int = 70) -> str:
+    """A folder name that works on Windows: no <>:"/\\|?*, no emoji, no trailing dots, not too long."""
+    name = strip_emoji(re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", text))
+    name = re.sub(r"\s+", " ", name).strip(" .")[:max_len].rstrip(" .")
+    if name.lower() in _RESERVED:
+        name += "_"
+    return name
+
+
+def video_folder(output_root: Path, video: VideoInfo) -> Path:
+    """output/<YouTube video title>/ (the id is added only if another video already has that title)."""
+    name = safe_name(video.title) or safe_name(video.id) or "video"
+    folder = output_root / name
+    marker = folder / ".video-id"
+    if folder.exists() and marker.exists() and marker.read_text(encoding="utf-8").strip() != video.id:
+        folder = output_root / f"{name} [{safe_name(video.id, 20)}]"
+        marker = folder / ".video-id"
+    folder.mkdir(parents=True, exist_ok=True)
+    marker.write_text(video.id, encoding="utf-8")
     return folder
 
 
-def write_post(folder: Path, titles: list[str], desc: str, video: VideoInfo, start: float, end: float, extra: list[str]) -> Path:
-    parts = ["TITLE OPTIONS (pick one, edit freely)"]
+def clip_folder(video_dir: Path, source_start: float, source_end: float) -> Path:
+    """'clip 12.30-12.58' inside the video's folder. Making the same moment again reuses (empties) it."""
+    name = f"clip {fmt_time(source_start).replace(':', '.')}-{fmt_time(source_end).replace(':', '.')}"
+    folder = video_dir / name
+    if folder.exists():
+        for item in folder.iterdir():
+            if item.is_file():
+                item.unlink()
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def write_post(folder: Path, titles: list[str], desc: str, video: VideoInfo, start: float, end: float, extra: list[str],
+               top_note: str = "") -> Path:
+    parts = ([top_note, ""] if top_note else []) + ["TITLE OPTIONS (pick one, edit freely)"]
     parts += [f"{i}. {t}" for i, t in enumerate(titles, 1)] or ["(add a hook to get title ideas)"]
     parts += ["", "DESCRIPTION (paste as is)", desc.rstrip(), ""]
     parts += ["CHECK BEFORE POSTING"]

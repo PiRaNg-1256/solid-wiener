@@ -115,7 +115,7 @@ def test_video_without_audio_still_renders(cfg, tmp_path):
     assert (info.width, info.height) == (1080, 1920) and info.has_audio
 
 
-def test_hindi_clip_gets_english_letters_and_hindi_script_versions(cfg, tmp_path, monkeypatch):
+def test_hindi_clip_gets_one_video_with_english_letter_captions(cfg, tmp_path, monkeypatch):
     from clipper.transcribe import Transcript, Word
 
     hindi = ["भाई", "देख", "पुलिस", "आ", "गई।", "भागो", "यार", "जल्दी", "निकल।"]
@@ -134,17 +134,13 @@ def test_hindi_clip_gets_english_letters_and_hindi_script_versions(cfg, tmp_path
     src = make_video(tmp_path / "hindi.mp4", duration=60, burst_at=30.0)
     folder = make(str(src), MakeOptions(start=20, end=42, hook="भाई ये क्या हो गया", music="none", prompt=False), cfg)[0]
     meta = check_clip(folder, max_len=22)
-    assert meta["captions"]["hindi_scripts"] == ["latin", "devanagari"]
-    assert (folder / "clip_devanagari.mp4").exists()
-    assert media.probe(folder / "clip_devanagari.mp4").duration == pytest.approx(media.probe(folder / "clip.mp4").duration, abs=0.1)
-    work = next((cfg.root / "cache" / "work").iterdir())
-    latin, devanagari = (work / "clip.ass").read_text(encoding="utf-8"), (work / "clip_devanagari.ass").read_text(encoding="utf-8")
-    assert "POLICE" in latin and "BHAGO" not in latin and "BHAAGO" in latin and "पुलिस" not in latin.split("[Events]")[1].split("Hook")[-1]
-    assert "पुलिस" in devanagari
+    assert meta["captions"]["script"] == "latin"
+    assert not list(folder.glob("*devanagari*"))
+    srt = (folder / "captions.srt").read_text(encoding="utf-8")
+    assert "police" in srt and "पुलिस" not in srt
+    ass = (next((cfg.root / "cache" / "work").iterdir()) / "clip.ass").read_text(encoding="utf-8")
+    assert "POLICE" in ass and "BHAAGO" in ass
     assert "English letters" in (folder / "post.txt").read_text(encoding="utf-8")
-
-    only_latin = make(str(src), MakeOptions(start=20, end=42, hook="X", music="none", prompt=False, hindi_script="latin", force=True), cfg)[0]
-    assert not (only_latin / "clip_devanagari.mp4").exists()
 
 
 def test_gemini_words_replace_misheard_ones_and_failures_fall_back(cfg, tmp_path, monkeypatch):
@@ -160,7 +156,7 @@ def test_gemini_words_replace_misheard_ones_and_failures_fall_back(cfg, tmp_path
             t, i = t + 0.5, i + 1
         return Transcript(language="hi", probability=0.9, words=words, engine="small on CPU (int8)")
 
-    def fake_gemini(clip_audio, gcfg, sr=16000):
+    def fake_gemini(clip_audio, gcfg, sr=16000, **kwargs):
         n = int(len(clip_audio) / 16000 / 0.5) + 2
         pairs = [("भाई", "bhai"), ("मेरा", "mera"), ("फ्रेंड", "friend"), ("आ", "aa"), ("गया", "gaya")]
         return gemini.GeminiWords("hi", [pairs[i % 5] for i in range(n)], "gemini-flash-latest")
@@ -178,7 +174,7 @@ def test_gemini_words_replace_misheard_ones_and_failures_fall_back(cfg, tmp_path
     text = ass.read_text(encoding="utf-8")
     assert "FRIEND" in text and "PHREND" not in text
 
-    def broken(clip_audio, gcfg, sr=16000):
+    def broken(clip_audio, gcfg, sr=16000, **kwargs):
         raise gemini.GeminiError("quota", "free quota used up (limit: 20)")
 
     monkeypatch.setattr("clipper.pipeline.gemini.transcribe_clip", broken)

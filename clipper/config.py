@@ -60,7 +60,7 @@ class CaptionConfig:
     enabled: bool = True
     languages: list[str] = field(default_factory=lambda: ["en", "hi"])
     translate_to_english: bool = False
-    hindi_script: str = "both"  # latin (English letters) | devanagari | both (two video files)
+    hindi_script: str = "latin"  # latin = Hindi in English letters ("bhai ye kya ho gaya") | devanagari
     model: str = "auto"  # auto = large-v3 on an NVIDIA GPU, small on CPU; or tiny/base/small/medium/large-v3
     device: str = "auto"  # auto = NVIDIA GPU if it passes a one-time test, else CPU; or cpu / cuda
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
@@ -94,6 +94,12 @@ class YouTubeConfig:
 
 
 @dataclass
+class SheetConfig:
+    file: str = "clips.xlsx"  # the Excel sheet `clipper run` works through
+    check_captions_first: bool = True  # stop after making captions so you can edit them, then render
+
+
+@dataclass
 class GameConfig:
     name: str = ""
     keywords: list[str] = field(default_factory=list)
@@ -122,6 +128,7 @@ def _default_games() -> dict[str, GameConfig]:
 
 @dataclass
 class Config:
+    gemini_api_key: str = ""  # free key from aistudio.google.com (project without billing); empty = no Gemini
     output_dir: str = "output"
     cache_dir: str = "cache"
     ffmpeg: str = ""  # path to ffmpeg if it isn't found automatically
@@ -139,6 +146,7 @@ class Config:
     music: MusicConfig = field(default_factory=MusicConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
     youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
+    sheet: SheetConfig = field(default_factory=SheetConfig)
     games: dict[str, GameConfig] = field(default_factory=_default_games)
     root: Path = PROJECT_DIR  # folder that relative paths are resolved against (not a YAML key)
 
@@ -205,8 +213,10 @@ def validate(cfg: Config) -> None:
         raise ClipperError("style.zoom must be between 1.0 and 2.0")
     if not 5 <= cfg.clip.min_seconds <= cfg.clip.max_seconds <= 180:
         raise ClipperError("clip lengths must satisfy 5 <= min_seconds <= max_seconds <= 180")
-    if cfg.captions.hindi_script not in ("latin", "devanagari", "both"):
-        raise ClipperError("captions.hindi_script must be latin, devanagari or both")
+    if cfg.captions.hindi_script == "both":  # older setting: only the English-letters video is made now
+        cfg.captions.hindi_script = "latin"
+    if cfg.captions.hindi_script not in ("latin", "devanagari"):
+        raise ClipperError("captions.hindi_script must be latin or devanagari")
     if cfg.captions.device not in ("cpu", "cuda", "auto"):
         raise ClipperError("captions.device must be auto, cpu or cuda")
     if cfg.render.encoder not in ("auto", "libx264", "h264_nvenc", "h264_amf", "h264_qsv"):
@@ -215,11 +225,36 @@ def validate(cfg: Config) -> None:
         hex_to_ass(color)  # raises a readable error if the colour is malformed
 
 
+KEY_BLOCK = """# ===== Gemini API key (optional, free) =====
+# Paste your free key from aistudio.google.com between the quotes. Create the key in a project
+# WITHOUT billing, so Google can never charge it. Leave it empty to use only the local speech model.
+gemini_api_key: ""
+
+"""
+
+
+def add_key_line(config_path: Path) -> bool:
+    """Older config files have no place for the Gemini key: add it at the top (everything else stays)."""
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if "gemini_api_key" in text:
+        return False
+    try:
+        config_path.write_text(KEY_BLOCK + text, encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
 def load_config(path: str | Path | None = None) -> Config:
     cfg = Config()
     config_path = Path(path) if path else PROJECT_DIR / "config.yaml"
     if path and not config_path.exists():
         raise ClipperError(f"Config file not found: {config_path}")
+    if not path and config_path.exists():
+        add_key_line(config_path)
     if config_path.exists():
         try:
             data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -227,5 +262,7 @@ def load_config(path: str | Path | None = None) -> Config:
             raise ClipperError(f"config.yaml has a formatting mistake:\n{exc}") from None
         _merge(cfg, data)
         cfg.root = config_path.resolve().parent
+    if cfg.gemini_api_key.strip() and not cfg.captions.gemini.api_key.strip():
+        cfg.captions.gemini.api_key = cfg.gemini_api_key.strip()
     validate(cfg)
     return cfg

@@ -1,7 +1,13 @@
-# Your settings. setup.cmd copies this file to config.yaml; edit config.yaml, not this one.
+# ===== Gemini API key (optional, free) =====
+# Paste your free key from aistudio.google.com between the quotes. Create the key in a project
+# WITHOUT billing, so Google can never charge it. Leave it empty to use only the local speech model.
+gemini_api_key: ""
+
+# ===== Your settings =====
+# setup.cmd copies this file to config.yaml; edit config.yaml, not this one.
 # Anything you delete or leave out uses the built-in default shown here.
 
-output_dir: output          # finished clips go to output/review/<date>/...; move keepers to output/ready
+output_dir: output          # clips go to output/<YouTube video title>/clip 01 (...)/
 cache_dir: cache            # downloads and temporary files (safe to delete when the tool isn't running)
 ffmpeg: ""                  # full path to ffmpeg.exe, only if it isn't found automatically
 
@@ -39,14 +45,11 @@ captions:
   enabled: true
   languages: [en, hi]       # the spoken language is detected among these
   translate_to_english: false   # true = Hindi speech gets English captions
-  hindi_script: both        # Hindi captions: latin = English letters ("bhai ye kya ho gaya"),
-                            # devanagari = Hindi script, both = two videos (clip.mp4 latin, clip_devanagari.mp4)
+  hindi_script: latin       # Hindi captions in English letters ("bhai ye kya ho gaya"); devanagari = Hindi script
   model: auto               # auto = large-v3 on an NVIDIA GPU, small on the CPU.
                             # Or pick: tiny / base / small / medium / large-v3 (bigger = more accurate, slower)
   device: auto              # auto = use the NVIDIA GPU if it passes a one-time test, else the CPU. Or: cpu / cuda
-  gemini:                   # optional, free: Gemini double-checks the words (the local model keeps the timing)
-    api_key: ""             # free key from aistudio.google.com; create it in a project WITHOUT billing,
-                            # so Google can never charge it. Or set the GEMINI_API_KEY environment variable.
+  gemini:                   # optional, free: uses the gemini_api_key at the top of this file
     models: [gemini-flash-latest, gemini-flash-lite-latest]   # tried in order; free-tier models
     timeout_seconds: 45
 
@@ -66,6 +69,10 @@ render:
   loudness_lufs: -14        # YouTube plays everything at about -14 LUFS
   true_peak_db: -1
   keep_work_files: false    # true keeps temporary files in cache/work for troubleshooting
+
+sheet:
+  file: clips.xlsx          # the Excel sheet that `clipper run` (or run.cmd) works through
+  check_captions_first: true  # stop after making captions so you can edit them; set Status to Ready to render
 
 youtube:
   cookies_from_browser: ""  # if YouTube asks you to "confirm you're not a bot": firefox
