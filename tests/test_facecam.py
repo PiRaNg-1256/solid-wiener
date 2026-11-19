@@ -152,6 +152,8 @@ def test_whole_clip_face_big_on_top_and_not_in_the_gameplay(cfg, fake_transcribe
     image = np.frombuffer(frame, np.uint8).reshape(1920, 1080, 3)
 
     def faces(img):
+        # at half size: the face detector is unsure about faces 500+ pixels wide (scores ~0.7 instead of ~0.95)
+        img = cv2.resize(img, (img.shape[1] // 2, img.shape[0] // 2), interpolation=cv2.INTER_AREA)
         h, w = img.shape[:2]
         detector = facecam._detector((w, h))
         _, found = detector.detect(np.ascontiguousarray(img))
@@ -159,7 +161,7 @@ def test_whole_clip_face_big_on_top_and_not_in_the_gameplay(cfg, fake_transcribe
 
     top, bottom = image[:960], image[960:]
     big = faces(top)
-    assert len(big) >= 1 and big[0][2] > 150  # the face fills a good part of the top half
+    assert len(big) >= 1 and big[0][2] * 2 > 150  # the face fills a good part of the top half
     assert len(faces(bottom)) == 0  # the webcam's corner is not in the gameplay half
 
 

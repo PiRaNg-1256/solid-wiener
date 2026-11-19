@@ -196,10 +196,17 @@ def scene_cuts(path: str | Path, threshold: float = 10.0) -> list[float]:
     return sorted({round(float(t), 3) for _score, t in _SCENE_RE.findall(proc.stderr)})
 
 
+_HAS: dict[tuple[str, str, str], bool] = {}
+
+
 def ffmpeg_has(kind: str, name: str) -> bool:
-    """kind: 'filters' or 'encoders'."""
-    proc = subprocess.run([ffmpeg_bin(), "-hide_banner", f"-{kind}"], capture_output=True, text=True, errors="replace")
-    return any(line.split()[1:2] == [name] for line in proc.stdout.splitlines() if len(line.split()) > 1)
+    """kind: 'filters' or 'encoders'. Remembered per FFmpeg program for this run."""
+    key = (ffmpeg_bin(), kind, name)
+    if key not in _HAS:
+        proc = subprocess.run([ffmpeg_bin(), "-hide_banner", f"-{kind}"], capture_output=True, text=True,
+                              errors="replace")
+        _HAS[key] = any(line.split()[1:2] == [name] for line in proc.stdout.splitlines() if len(line.split()) > 1)
+    return _HAS[key]
 
 
 def ffmpeg_version() -> str:

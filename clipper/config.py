@@ -96,6 +96,7 @@ class YouTubeConfig:
     cookies_from_browser: str = ""  # e.g. firefox (use a throwaway Google account)
     cookies_file: str = ""
     sleep_between_requests: float = 0.0
+    max_height: str = "auto"  # auto = 1440p when the picture is enlarged (crop layout, facecam), else 1080p
 
 
 @dataclass
@@ -232,6 +233,9 @@ def validate(cfg: Config) -> None:
         raise ClipperError("captions.hindi_script must be latin or devanagari")
     if cfg.captions.device not in ("cpu", "cuda", "auto"):
         raise ClipperError("captions.device must be auto, cpu or cuda")
+    cfg.youtube.max_height = cfg.youtube.max_height.strip().lower().rstrip("p")
+    if cfg.youtube.max_height not in ("auto", "720", "1080", "1440", "2160"):
+        raise ClipperError("youtube.max_height must be auto, 720, 1080, 1440 or 2160")
     cfg.captions.profanity = cfg.captions.profanity.strip().lower()
     if cfg.captions.profanity not in ("mask", "strict", "show"):
         raise ClipperError("captions.profanity must be mask, strict or show")

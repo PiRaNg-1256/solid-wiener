@@ -298,7 +298,7 @@ def prepare_clip(
         if local:
             segment = cut_local(local, dl_start, dl_end, cache / "videos" / video.id)
         else:
-            segment = download_segment(video.url, video.id, dl_start, dl_end, cfg)
+            segment = download_segment(video.url, video.id, dl_start, dl_end, cfg, height=source_height(cfg))
     seg = media.probe(segment)
     if not seg.has_video or seg.duration <= 0:
         raise ClipperError("The downloaded part has no usable video.")
@@ -469,6 +469,15 @@ def prepare_clip(
     return folder
 
 
+def source_height(cfg: Config) -> int:
+    """How tall a video to download. Layouts that enlarge the picture (crop fills the screen with a third of the
+    frame; facecam blows the webcam up ~3x) get 1440p when YouTube has it: much sharper after enlarging."""
+    if cfg.youtube.max_height != "auto":
+        return int(cfg.youtube.max_height)
+    enlarges = cfg.style.layout == "crop" or facecam.parse_hint(cfg.style.facecam) is not None
+    return 1440 if enlarges else 1080
+
+
 def _facecam_record(setting: str, cam: facecam.FacecamBox | None) -> dict | None:
     if facecam.parse_hint(setting) is None:  # "" or Off
         return None
@@ -478,10 +487,12 @@ def _facecam_record(setting: str, cam: facecam.FacecamBox | None) -> dict | None
 
 def _layout_for(job: dict, cfg: Config):
     cam = job.get("facecam") or {}
+    cas = media.ffmpeg_has("filters", "cas")
     if cam.get("box"):
         return build_layout(cfg.style.layout, job["width"], job["height"], cfg.style.zoom, facecam=cam["box"],
-                            share=cfg.style.facecam_share, face=tuple(cam["face"]) if cam.get("face") else None)
-    return build_layout(cfg.style.layout, job["width"], job["height"], cfg.style.zoom)
+                            share=cfg.style.facecam_share, face=tuple(cam["face"]) if cam.get("face") else None,
+                            cas=cas)
+    return build_layout(cfg.style.layout, job["width"], job["height"], cfg.style.zoom, cas=cas)
 
 
 def _overlay_files(work: Path, cfg: Config, layout, lines, duration: float, hook: str, video: VideoInfo) -> None:

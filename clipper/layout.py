@@ -20,6 +20,20 @@ class Layout:
     hook_center: int | None = None  # if set, the hook box is centred on this line instead (captions move below it)
 
 
+SCALE_FLAGS = "lanczos+accurate_rnd+full_chroma_int"  # sharpest standard scaler, colours kept at full detail
+
+
+def enlarge(factor: float, cas: bool = True) -> tuple[str, str]:
+    """(before, after) filters for a picture scaled up `factor` times: a light clean-up of compression blocks
+    before (they would be enlarged too), adaptive sharpening after. Nothing for pictures made smaller."""
+    before = "hqdn3d=1.2:1.2:3:3," if factor > 1.6 else ""
+    if factor <= 1.08:
+        return before, ""
+    amount = min(0.7, 0.25 + 0.2 * (factor - 1))
+    after = f",cas={amount:.2f}" if cas else f",unsharp=5:5:{amount + 0.3:.2f}:5:5:0"
+    return before, after
+
+
 def _even(x: float) -> int:
     """Even size of at least 2 pixels (video sizes must be even)."""
     return max(2, int(round(x / 2)) * 2)
@@ -30,7 +44,7 @@ def _pos(x: float) -> int:
     return max(0, int(round(x / 2)) * 2)
 
 
-def blur_layout(src_w: int, src_h: int, zoom: float = 1.25) -> Layout:
+def blur_layout(src_w: int, src_h: int, zoom: float = 1.25, cas: bool = True) -> Layout:
     """Gameplay in the middle, a blurred copy of it filling the rest of the frame."""
     zoom = max(1.0, zoom)
     crop_w, crop_h = _even(src_w / zoom), _even(src_h)
@@ -41,12 +55,14 @@ def blur_layout(src_w: int, src_h: int, zoom: float = 1.25) -> Layout:
     fg_x = (OUT_W - fg_w) // 2
     fg_y = _even(max(330, (OUT_H - fg_h) / 2 - 60))
     fg_bottom = fg_y + fg_h
+    pre, post = enlarge(fg_w / crop_w, cas)
     flt = (
         "split=2[clipbg][clipfg];"
         # blur a small copy then scale it up: same look, a fraction of the work
         "[clipbg]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=10:2,"
         f"eq=brightness=-0.08:saturation=1.15,scale={OUT_W}:{OUT_H},setsar=1[clipbgo];"
-        f"[clipfg]crop={crop_w}:{crop_h}:(iw-{crop_w})/2:(ih-{crop_h})/2,scale={fg_w}:{fg_h}:flags=lanczos,setsar=1[clipfgo];"
+        f"[clipfg]crop={crop_w}:{crop_h}:(iw-{crop_w})/2:(ih-{crop_h})/2,{pre}scale={fg_w}:{fg_h}:flags={SCALE_FLAGS}"
+        f"{post},setsar=1[clipfgo];"
         f"[clipbgo][clipfgo]overlay={fg_x}:{fg_y}"
     )
     return Layout(
@@ -59,19 +75,21 @@ def blur_layout(src_w: int, src_h: int, zoom: float = 1.25) -> Layout:
     )
 
 
-def crop_layout(src_w: int, src_h: int) -> Layout:
+def crop_layout(src_w: int, src_h: int, cas: bool = True) -> Layout:
     """Fill the whole screen with the centre of the video (cuts off the sides of 16:9 footage)."""
     target = OUT_W / OUT_H
     if src_w / src_h > target:
         crop_w, crop_h = _even(src_h * target), _even(src_h)
     else:
         crop_w, crop_h = _even(src_w), _even(src_w / target)
-    flt = f"crop={crop_w}:{crop_h}:(iw-{crop_w})/2:(ih-{crop_h})/2,scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1"
+    pre, post = enlarge(OUT_W / crop_w, cas)
+    flt = f"crop={crop_w}:{crop_h}:(iw-{crop_w})/2:(ih-{crop_h})/2,{pre}scale={OUT_W}:{OUT_H}:flags={SCALE_FLAGS}{post},setsar=1"
     return Layout(name="crop", filter=flt, hook_top=220, caption_bottom=1400, credit_top=1480, gameplay=(0, 0, OUT_W, OUT_H))
 
 
 def facecam_layout(
-    src_w: int, src_h: int, cam: tuple[int, int, int, int], share: float = 0.5, face: tuple[float, float] | None = None
+    src_w: int, src_h: int, cam: tuple[int, int, int, int], share: float = 0.5, face: tuple[float, float] | None = None,
+    cas: bool = True,
 ) -> Layout:
     """Streamer's webcam enlarged on top, gameplay below. The webcam's original spot is kept out of the
     gameplay part (or blurred over if it can't be avoided), so the face never shows twice."""
@@ -119,10 +137,12 @@ def facecam_layout(
         pw, ph = min(_even(ox), gw - px), min(_even(oy), gh - py)
         game += (f",split=2[clipga][clipgb];[clipgb]crop={pw}:{ph}:{px}:{py},boxblur=20:3[clipgp];"
                  f"[clipga][clipgp]overlay={px}:{py}")
+    cam_pre, cam_post = enlarge(OUT_W / kw, cas)
+    game_pre, game_post = enlarge(OUT_W / gw, cas)
     flt = (
         "split=2[clipcam][clipgame];"
-        f"[clipcam]crop={kw}:{kh}:{kx}:{ky},scale={OUT_W}:{top_h}:flags=lanczos,unsharp=5:5:0.6:5:5:0.0,setsar=1[cliptop];"
-        f"{game},scale={OUT_W}:{bot_h}:flags=lanczos,setsar=1[clipbot];"
+        f"[clipcam]crop={kw}:{kh}:{kx}:{ky},{cam_pre}scale={OUT_W}:{top_h}:flags={SCALE_FLAGS}{cam_post},setsar=1[cliptop];"
+        f"{game},{game_pre}scale={OUT_W}:{bot_h}:flags={SCALE_FLAGS}{game_post},setsar=1[clipbot];"
         f"[cliptop][clipbot]vstack,drawbox=x=0:y={top_h - 3}:w={OUT_W}:h=6:color=black@0.5:t=fill"
     )
     return Layout(
@@ -137,13 +157,14 @@ def facecam_layout(
 
 
 def build_layout(name: str, src_w: int, src_h: int, zoom: float = 1.25, facecam: tuple | None = None,
-                 share: float = 0.5, face: tuple[float, float] | None = None) -> Layout:
+                 share: float = 0.5, face: tuple[float, float] | None = None, cas: bool = True) -> Layout:
+    """cas: FFmpeg has the 'cas' sharpening filter (any FFmpeg from 2021 on); otherwise 'unsharp' is used."""
     if src_w <= 0 or src_h <= 0:
         raise ValueError("source video has no size")
     if facecam is not None:
-        return facecam_layout(src_w, src_h, tuple(int(v) for v in facecam), share, face)
+        return facecam_layout(src_w, src_h, tuple(int(v) for v in facecam), share, face, cas)
     if src_w / src_h < 0.75:  # already vertical (e.g. a Short): just fill the screen
-        return crop_layout(src_w, src_h)
+        return crop_layout(src_w, src_h, cas)
     if name == "crop":
-        return crop_layout(src_w, src_h)
-    return blur_layout(src_w, src_h, zoom)
+        return crop_layout(src_w, src_h, cas)
+    return blur_layout(src_w, src_h, zoom, cas)

@@ -9,8 +9,17 @@ from .config import Config
 from .metadata import explain_ytdlp_error, ytdlp_options
 from .util import ClipperError
 
-# Prefer H.264 up to 1080p (fast to decode), fall back to anything up to 1080p
-VIDEO_FORMAT = "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b"
+def video_format(height: int = 1080) -> str:
+    """yt-dlp format choice. Up to 1080p: H.264 first (fast to decode). Above: whatever is sharpest, but never HDR:
+    YouTube's HDR streams would look washed out in a normal (SDR) Short."""
+    if height <= 1080:
+        return (f"bv*[height<={height}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<={height}][dynamic_range=SDR]+ba/"
+                f"b[height<={height}]/bv*+ba/b")
+    return (f"bv*[height<={height}][dynamic_range=SDR]+ba[ext=m4a]/bv*[height<={height}][dynamic_range=SDR]+ba/"
+            "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*+ba/b")
+
+
+VIDEO_FORMAT = video_format(1080)
 AUDIO_FORMAT = "ba[ext=m4a]/ba/b"
 
 
@@ -58,19 +67,20 @@ def _cached(folder: Path, pattern: str, need_video: bool) -> Path | None:
     return None
 
 
-def download_segment(url: str, video_id: str, start: float, end: float, cfg: Config) -> Path:
-    """Download [start, end] seconds. The file's time 0 equals `start` in the original video."""
+def download_segment(url: str, video_id: str, start: float, end: float, cfg: Config, height: int = 1080) -> Path:
+    """Download [start, end] seconds, at most `height` pixels tall. The file's time 0 equals `start` in the
+    original video."""
     from yt_dlp.utils import download_range_func
 
     folder = cfg.path(cfg.cache_dir) / "videos" / video_id
     folder.mkdir(parents=True, exist_ok=True)
-    stem = f"seg_{start:.1f}-{end:.1f}"
+    stem = f"seg_{start:.1f}-{end:.1f}" + (f"_h{height}" if height != 1080 else "")
     cached = _cached(folder, stem + ".*", need_video=True)
     if cached:
         return cached
     opts = ytdlp_options(
         cfg,
-        format=VIDEO_FORMAT,
+        format=video_format(height),
         outtmpl=str(folder / (stem + ".%(ext)s")),
         merge_output_format="mp4/mkv",
         download_ranges=download_range_func(None, [(start, end)]),
