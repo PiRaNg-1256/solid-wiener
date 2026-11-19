@@ -135,6 +135,26 @@ def _fade(samples: np.ndarray, sr: int, fade_in: float, fade_out: float) -> None
         samples[n - b :] *= np.linspace(1, 0, b, dtype=np.float32)[:, None]
 
 
+def bleep(samples: np.ndarray, sr: int, spans: list[tuple[float, float]], freq: float = 1000.0,
+          level_db: float = -16.0, ramp: float = 0.008) -> np.ndarray:
+    """Replace the sound in each span with a beep (TV style), with short ramps so there are no clicks."""
+    n = len(samples)
+    keep = np.ones(n, np.float32)
+    tone = np.zeros(n, np.float32)
+    r = max(1, int(ramp * sr))
+    t = np.arange(n) / sr
+    for start, end in spans:
+        a, b = max(0, int(start * sr)), min(n, int(end * sr))
+        if b - a < 2 * r:
+            continue
+        env = np.ones(b - a, np.float32)
+        env[:r], env[-r:] = np.linspace(0, 1, r), np.linspace(1, 0, r)
+        keep[a:b] = np.minimum(keep[a:b], 1 - env)
+        tone[a:b] = np.maximum(tone[a:b], env)
+    beep = (np.sin(2 * np.pi * freq * t) * 10 ** (level_db / 20)).astype(np.float32) * tone
+    return samples * keep[:, None] + beep[:, None]
+
+
 def prepare_audio(
     segment: Path,
     has_audio: bool,
@@ -145,8 +165,10 @@ def prepare_audio(
     music_cfg: MusicConfig,
     render_cfg: RenderConfig,
     workdir: Path,
+    bleeps: list[tuple[float, float]] = (),
 ) -> AudioResult:
-    """words: relative to the clip start. Writes WAV files into workdir."""
+    """words: relative to the clip start. Writes WAV files into workdir. bleeps: (start, end) times where the
+    game audio is replaced by a beep (hidden swear words)."""
     duration = clip_end - clip_start
     n = int(round(duration * SR))
     if has_audio:
@@ -155,6 +177,8 @@ def prepare_audio(
         game = np.zeros((n, 2), dtype=np.float32)
     game = _fit(game.astype(np.float32), n)
     _fade(game, SR, 0.015, 0.015)
+    if bleeps:
+        game = bleep(game, SR, bleeps)
     game_lufs = integrated_lufs(game, SR)
 
     game_out = workdir / "game.wav"

@@ -36,13 +36,16 @@ Fill in:
    For each word: "text" = the word in the script it is normally written in (Hindi in Devanagari, English in
    English); "latin" = the same word in English letters, spelled the way Indians type Hindi online ("bhai",
    "kya", "nahi", "yaar"), and English words in normal English spelling. Keep names and slang (GTA, Vice City, bro).
+   Write swear words exactly as said and in full, English and Hindi ("fuck", "shit", "bhenchod", "chutiya"):
+   never asterisks like "f***", never "[expletive]", never a softer word like "freaking". The tool hides them on
+   screen itself; a missing or changed swear makes the captions wrong.
 3. "hook": the text shown at the top of the Short for the whole clip. At most 7 words. Make people want to keep
    watching: tease or react to what happens, without giving away the ending. Be specific to what is seen and heard.
    No emojis, hashtags or quotes. No graphic violence or gore words, and no spoilers of the game's story.
-   English, or Hindi in English letters if the speech is Hindi.
+   English, or Hindi in English letters if the speech is Hindi. No swear words, not even with asterisks.
 4. "titles": three different YouTube title options, each under 70 characters, honest about what's in the clip.
-   At most one emoji each. No hashtags.
-5. "description": one or two short sentences for the video description. No hashtags, no links.
+   At most one emoji each. No hashtags. No swear words (YouTube gives no ads to titles with them).
+5. "description": one or two short sentences for the video description. No hashtags, no links, no swear words.
 6. "hashtags": up to 3 extra hashtags (starting with #) about the game or what happens."""
 
 SCHEMA = {
@@ -231,7 +234,7 @@ def check(cfg: GeminiConfig) -> list[tuple[str, bool, str]]:
     """For `clipper gemini-test`: does each configured model answer on this key? Uses one tiny request per model."""
     key = api_key(cfg)
     if not key:
-        return [("API key", False, "not set: add captions.gemini.api_key to config.yaml or set GEMINI_API_KEY")]
+        return [("API key", False, "not set: paste it into gemini_api_key at the top of config.yaml")]
     results = []
     body = {"contents": [{"role": "user", "parts": [{"text": "Reply with the single word OK."}]}],
             "generationConfig": {"temperature": 0, "maxOutputTokens": 64}}

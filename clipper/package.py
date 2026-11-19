@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .config import Config, GameConfig
 from .metadata import VideoInfo
+from .profanity import has_swear, mask_text
 from .util import fmt_time, strip_emoji
 
 TITLE_LIMIT = 100  # YouTube's maximum title length
@@ -44,6 +45,8 @@ def title_options(hook: str | None, game: GameConfig | None, templates: list[str
     tag = tags[0] if tags else ""
     game_name = game.name if game else ""
     clean_hook = re.sub(r"\s*\|\s*", " ", hook or "").strip()
+    if has_swear(clean_hook):  # no swear words in titles, so skip the templates that repeat the hook
+        clean_hook = ""
     titles = []
     for template in templates:
         if ("{hook}" in template and not clean_hook) or ("{game}" in template and not game):
@@ -65,9 +68,9 @@ def description(
 ) -> str:
     lines = []
     if summary:
-        lines += [summary.strip(), ""]
+        lines += [mask_text(summary.strip(), "strict"), ""]
     elif hook:
-        lines += [re.sub(r"\s*\|\s*", " ", hook).strip(), ""]
+        lines += [mask_text(re.sub(r"\s*\|\s*", " ", hook).strip(), "strict"), ""]
     if credit_on and not video.is_local:
         lines.append(f"🎮 Footage: {video.creator} → {video.link_at(source_start)}")
     if music_credit:
@@ -123,6 +126,8 @@ def write_post(folder: Path, titles: list[str], desc: str, video: VideoInfo, sta
         "- No graphic violence in the first ~7 seconds (otherwise no ads).",
         "- Not focused on violence against civilians (YouTube age-restricts that).",
         "- No story spoilers in the hook or title.",
+        "- No swear words in the title or the cover picture (otherwise no ads). The tool keeps them out of the "
+        "titles above and hides them as f**k in the captions.",
     ]
     if extra:
         parts += ["", "NOTES"] + [f"- {x}" for x in extra]

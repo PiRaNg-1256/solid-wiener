@@ -155,8 +155,29 @@ def pick_language(all_probs: list[tuple[str, float]], allowed: list[str]) -> tup
     return best, probs.get(best, 0.0)
 
 
-def transcribe(audio: np.ndarray, cfg: CaptionConfig, language: str | None = None, cache_dir: Path | None = None) -> Transcript:
-    """audio: 16 kHz mono float32. language: force 'en' / 'hi', or None to detect."""
+# Speech models learn from subtitles that often censor swearing, so they tend to drop swears or write a milder
+# word. Showing them uncensored gamer talk first makes them write what is actually said (masking happens later).
+STYLE_PROMPT = {
+    "en": "Bro, what the fuck was that? Holy shit, he's dead! Let's go, man.",
+    "hi": "भाई ये क्या था, भेनचोद! What the fuck, चल चल, मर गया यार।",
+}
+SWEAR_HINTS = {
+    "en": ["fuck", "fucking", "shit", "bitch", "asshole", "motherfucker"],
+    "hi": ["भेनचोद", "मादरचोद", "चूतिया", "भोसड़ीके", "गांडू", "साला", "fuck", "shit"],
+}
+
+
+def hint_text(language: str, vocabulary: list[str] | None = None) -> str:
+    """Words the model should expect in every 30-second window: names from the game, your own words, swears."""
+    words = list(dict.fromkeys([v.strip() for v in (vocabulary or []) if v and v.strip()][:24]))
+    words += SWEAR_HINTS.get(language, SWEAR_HINTS["en"])
+    return ", ".join(words)
+
+
+def transcribe(audio: np.ndarray, cfg: CaptionConfig, language: str | None = None, cache_dir: Path | None = None,
+               vocabulary: list[str] | None = None) -> Transcript:
+    """audio: 16 kHz mono float32. language: force 'en' / 'hi', or None to detect.
+    vocabulary: names and words to expect (the game's places and characters, your own list)."""
     if not has_speech(audio):
         return Transcript(note="no speech found")
     engine = choose_engine(cfg, cache_dir or Path("cache"))
@@ -180,6 +201,8 @@ def transcribe(audio: np.ndarray, cfg: CaptionConfig, language: str | None = Non
         vad_parameters={"min_silence_duration_ms": 400},
         beam_size=5,
         condition_on_previous_text=False,
+        initial_prompt=STYLE_PROMPT.get(lang, STYLE_PROMPT["en"]) if task == "transcribe" else None,
+        hotwords=hint_text(lang, list(cfg.vocabulary) + list(vocabulary or [])) if task == "transcribe" else None,
     )
     words: list[Word] = []
     for segment in segments:

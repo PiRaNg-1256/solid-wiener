@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import __version__, align, audio, captions, db, facecam, gemini, media, package, render, signals, sponsorblock
+from . import __version__, align, audio, captions, db, facecam, gemini, media, package, profanity, render, signals, sponsorblock
 from .analysis import envelope_db, pseudo_heatmap
 from .config import Config, validate
 from .download import cut_local, download_audio, download_segment
@@ -308,11 +308,16 @@ def prepare_clip(
         env_t, env_db = envelope_db(mono, 16000)
         cuts = media.scene_cuts(segment)
 
+    game = package.detect_game(f"{video.title} {_pick_hook(opts, index) or ''}", cfg.games, opts.game)
+    game_cfg = game[1] if game else None
+    vocabulary = list(cfg.captions.vocabulary) + (list(game_cfg.vocabulary) if game_cfg else [])
+
     transcript = Transcript(note="captions turned off")
     if cfg.captions.enabled and seg.has_audio:
         with rep.step("Listening for speech to make captions (first run: downloads the model, tests the GPU)"):
             language = None if opts.lang in (None, "", "auto") else opts.lang
-            transcript = transcribe(mono, cfg.captions, language=language, cache_dir=cache)
+            transcript = transcribe(mono, cfg.captions, language=language, cache_dir=cache,
+                                    vocabulary=list(game_cfg.vocabulary) if game_cfg else [])
         if transcript.words:
             rep.info(f"Speech: {len(transcript.words)} words, language '{transcript.language}', {transcript.engine}"
                      + (" (translated to English)" if transcript.translated else ""))
@@ -344,9 +349,6 @@ def prepare_clip(
         else:
             rep.warn("No webcam found in this clip, so it uses the normal layout.")
 
-    game = package.detect_game(f"{video.title} {_pick_hook(opts, index) or ''}", cfg.games, opts.game)
-    game_cfg = game[1] if game else None
-
     # one Gemini request: better caption words + hook + titles + description
     gem, better, gemini_note = None, None, ""
     if opts.gemini is not False and gemini.available(cfg.captions.gemini):
@@ -354,6 +356,8 @@ def prepare_clip(
             frames = [f for f in (media.frame_jpeg(segment, s + (e - s) * k) for k in (0.15, 0.4, 0.65, 0.9)) if f]
             context = (f"Video title: {video.title}\nChannel: {video.channel or 'unknown'}\n"
                        f"Game: {game_cfg.name if game_cfg else 'unknown'}")
+            if vocabulary:
+                context += "\nNames and words that may be said: " + ", ".join(dict.fromkeys(vocabulary))
             try:
                 gem = gemini.transcribe_clip(mono[int(s * 16000): int(e * 16000)], cfg.captions.gemini,
                                              frames=frames, context=context)
@@ -362,6 +366,11 @@ def prepare_clip(
                 gemini_note = f"Gemini not used: {exc}"
         if gem and gem.words and clip_words and cfg.captions.enabled and not transcript.translated:
             better, words_note = words_from_gemini(gem, clip_words)
+            if better:  # swears Gemini censored or softened: take them from the local model's words
+                restored = profanity.restore(better.native, clip_words)
+                profanity.restore(better.latin, clip_words, to_text=to_latin)
+                if restored:
+                    words_note += f" ({restored} swear word{'s' if restored > 1 else ''} put back as said)"
             gemini_note = f"{words_note}; {gemini_note}"
         (rep.info if gem else rep.warn)(gemini_note)
 
@@ -376,7 +385,7 @@ def prepare_clip(
             video, chapter_at(video, dl_start + refined.payoff), spoken)
         if script == "latin":
             ideas = [to_latin(i) if has_devanagari(i) else i for i in ideas]
-        ideas = list(dict.fromkeys(i for i in ideas if i))
+        ideas = list(dict.fromkeys(i for i in ideas if i and not profanity.has_swear(i)))
         hook_source = "gemini" if gem and gem.hook else "video title"
         if opts.prompt:
             answer = rep.ask_hook(HookContext(index, total, source_start, source_end, spoken, transcript.language, ideas))
@@ -389,11 +398,12 @@ def prepare_clip(
 
     tags = package.hashtags_for(game_cfg, cfg.default_hashtags)
     for tag in (gem.hashtags if gem else []):
-        if tag.lower() not in {t.lower() for t in tags}:
+        if tag.lower() not in {t.lower() for t in tags} and not profanity.has_swear_root(tag):
             tags.insert(len(tags) - 1, tag)
-    if gem and gem.titles:
+    clean_titles = [t for t in (gem.titles if gem else []) if not profanity.has_swear(t)]
+    if clean_titles:  # YouTube gives no ads to a title with strong language: never offer one
         lead = tags[0] if tags and tags[0].lower() != "#shorts" else ""
-        titles = [package._fit_title(f"{t} {lead} #shorts") for t in gem.titles]
+        titles = [package._fit_title(f"{t} {lead} #shorts") for t in clean_titles]
         titles_source = "gemini"
     else:
         titles = package.title_options(hook, game_cfg, cfg.title_templates, tags)
@@ -483,7 +493,8 @@ def _overlay_files(work: Path, cfg: Config, layout, lines, duration: float, hook
         shutil.copy2(src, fonts / name)
     (work / "clip.ass").write_text(
         captions.build_ass(lines, layout=layout, style=cfg.style, fonts_dir=cfg.fonts_dir, duration=duration,
-                           hook=hook or None, credit=package.credit_line(cfg, video)),
+                           hook=hook or None, credit=package.credit_line(cfg, video),
+                           profanity=cfg.captions.profanity),
         encoding="utf-8",
     )
 
@@ -594,7 +605,9 @@ def render_clip(folder: Path, cfg: Config, rep: Reporter | None = None, override
         layout = _layout_for(job, cfg)
         _overlay_files(work, cfg, layout, lines, duration, hook, video)
         with rep.step("Mixing game audio and music"):
-            mixed = audio.prepare_audio(segment, job["has_audio"], s, e, spoken, track, cfg.music, cfg.render, work)
+            bleeps = profanity.bleep_spans(spoken, cfg.captions.profanity) if cfg.captions.bleep == "all" else []
+            mixed = audio.prepare_audio(segment, job["has_audio"], s, e, spoken, track, cfg.music, cfg.render, work,
+                                        bleeps=bleeps)
         for old in ("clip.mp4", "clip_nomusic.mp4", "thumb.jpg", "preview.jpg"):
             (folder / old).unlink(missing_ok=True)
         with rep.step("Rendering the Short"):

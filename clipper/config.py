@@ -65,6 +65,9 @@ class CaptionConfig:
     hindi_script: str = "latin"  # latin = Hindi in English letters ("bhai ye kya ho gaya") | devanagari
     model: str = "auto"  # auto = large-v3 on an NVIDIA GPU, small on CPU; or tiny/base/small/medium/large-v3
     device: str = "auto"  # auto = NVIDIA GPU if it passes a one-time test, else CPU; or cpu / cuda
+    profanity: str = "mask"  # mask = swears shown as f**k | strict = also mild words | show = as spoken (not slurs)
+    bleep: str = "off"  # off | all = also beep the swears hidden on screen
+    vocabulary: list[str] = field(default_factory=list)  # names and words the speech model should expect
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
 
 
@@ -106,6 +109,7 @@ class GameConfig:
     name: str = ""
     keywords: list[str] = field(default_factory=list)
     hashtags: list[str] = field(default_factory=list)
+    vocabulary: list[str] = field(default_factory=list)  # names and places, so captions spell them right
 
 
 def _default_games() -> dict[str, GameConfig]:
@@ -114,16 +118,21 @@ def _default_games() -> dict[str, GameConfig]:
             "GTA 6",
             ["gta 6", "gta vi", "gta6", "gtavi", "grand theft auto vi", "grand theft auto 6"],
             ["#GTA6", "#GTAVI", "#GrandTheftAuto"],
+            ["GTA 6", "Vice City", "Leonida", "Lucia", "Jason", "Rockstar", "Port Gellhorn", "Grassrivers",
+             "Ambrosia", "Leonida Keys"],
         ),
         "gta5": GameConfig(
             "GTA 5",
             ["gta 5", "gta v", "gta5", "gtav", "gta online", "grand theft auto v"],
             ["#GTA5", "#GTAV", "#GTAOnline"],
+            ["GTA", "Los Santos", "Michael", "Franklin", "Trevor", "Lamar", "Lester", "Vinewood", "Sandy Shores",
+             "Paleto Bay", "Oppressor"],
         ),
         "rdr2": GameConfig(
             "Red Dead Redemption 2",
             ["rdr2", "rdr 2", "red dead redemption 2", "red dead 2"],
             ["#RDR2", "#RedDeadRedemption2"],
+            ["Arthur", "Dutch", "John Marston", "Sadie", "Micah", "Saint Denis", "Valentine", "Blackwater"],
         ),
     }
 
@@ -223,6 +232,14 @@ def validate(cfg: Config) -> None:
         raise ClipperError("captions.hindi_script must be latin or devanagari")
     if cfg.captions.device not in ("cpu", "cuda", "auto"):
         raise ClipperError("captions.device must be auto, cpu or cuda")
+    cfg.captions.profanity = cfg.captions.profanity.strip().lower()
+    if cfg.captions.profanity not in ("mask", "strict", "show"):
+        raise ClipperError("captions.profanity must be mask, strict or show")
+    bleep = cfg.captions.bleep.strip().lower()  # YAML reads a bare off/on as false/true
+    cfg.captions.bleep = {"false": "off", "no": "off", "none": "off", "": "off", "true": "all", "on": "all",
+                          "yes": "all"}.get(bleep, bleep)
+    if cfg.captions.bleep not in ("off", "all"):
+        raise ClipperError("captions.bleep must be off or all")
     if cfg.render.encoder not in ("auto", "libx264", "h264_nvenc", "h264_amf", "h264_qsv"):
         raise ClipperError("render.encoder must be auto, libx264, h264_nvenc, h264_amf or h264_qsv")
     for color in (cfg.style.caption_color, cfg.style.highlight_color):

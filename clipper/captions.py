@@ -12,6 +12,7 @@ from PIL import ImageFont
 
 from .config import StyleConfig
 from .layout import OUT_H, OUT_W, Layout
+from .profanity import mask_text, mask_word
 from .transcribe import Word
 from .util import ass_time, has_devanagari, hex_to_ass, strip_emoji
 
@@ -296,8 +297,10 @@ def build_ass(
     duration: float,
     hook: str | None = None,
     credit: str | None = None,
+    profanity: str = "mask",
 ) -> str:
-    """captions: caption lines, or plain timed words (grouped into lines here). Times are relative to the clip."""
+    """captions: caption lines, or plain timed words (grouped into lines here). Times are relative to the clip.
+    profanity: mask / strict / show, how swear words are shown (captions.srt keeps them as said)."""
     font = Font(fonts_dir / style.font_file)
     credit_font = Font(fonts_dir / style.credit_font_file)
     base = hex_to_ass(style.caption_color)
@@ -306,7 +309,7 @@ def build_ass(
 
     caption_bottom = layout.caption_bottom
     if hook and hook.strip():
-        ht = _hook_text(hook, style, font)
+        ht = _hook_text(mask_text(hook, profanity), style, font)
         if ht.text:
             end = min(duration, style.hook_seconds) if style.hook_seconds > 0 else duration
             margin = 0  # 0 = the style's place (layout.hook_top)
@@ -325,7 +328,8 @@ def build_ass(
     for line in lines:
         if line.start >= duration or not line.words:
             continue
-        shown = [clean_word(w.text, style.caption_uppercase) or w.text for w in line.words]
+        shown = [clean_word(mask_word(w.text, profanity), style.caption_uppercase) or mask_word(w.text, profanity)
+                 for w in line.words]
         width = font.width(" ".join(shown), style.caption_size) * 1.06
         size_tag = ""
         if width > CAPTION_MAX_WIDTH and len(shown) == 1:  # a single very long word: shrink it to fit
