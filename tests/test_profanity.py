@@ -212,3 +212,33 @@ def test_unreadable_swears_show_as_stars_in_the_captions_file(cfg):
              Word(0.8, 0.9, "]")]
     lines = make_lines(words, cfg.style, cfg.fonts_dir, 2.0)
     assert [w.text for ln in lines for w in ln.words] == ["what", "the", "****"]
+
+
+def test_hook_line_breaks_dont_hide_swears(cfg):
+    from clipper.captions import build_ass
+    from clipper.layout import build_layout
+
+    assert P.mask_text("GTA 6 COPS|FUCK THIS") == "GTA 6 COPS|F**K THIS"
+    assert P.has_swear("COPS|FUCK")
+    ass = build_ass([], layout=build_layout("blur", 1920, 1080), style=cfg.style, fonts_dir=cfg.fonts_dir,
+                    duration=5, hook="GTA 6 COPS|FUCK THIS")
+    assert r"GTA 6 COPS\NF**K THIS" in ass
+
+
+def test_other_languages_get_no_english_style_line(monkeypatch):
+    from clipper import transcribe as T
+
+    seen = {}
+
+    class FakeModel:
+        def transcribe(self, audio, **kwargs):
+            seen.update(kwargs)
+            return iter([]), None
+
+    monkeypatch.setattr(T, "has_speech", lambda audio: True)
+    monkeypatch.setattr(T, "choose_engine", lambda cfg, cache: T.Engine("cpu", "int8", "small"))
+    monkeypatch.setattr(T, "_load_model", lambda engine: FakeModel())
+    T.transcribe(np.zeros(16000, np.float32), CaptionConfig(languages=["es"]), language="es")
+    assert seen["initial_prompt"] is None and seen["hotwords"] is None
+    T.transcribe(np.zeros(16000, np.float32), CaptionConfig(vocabulary=["Valorant"]), language="es")
+    assert seen["hotwords"] == "Valorant"

@@ -230,13 +230,13 @@ def readable(text: str) -> str:
 
 
 def mask_text(text: str, mode: str = "mask") -> str:
-    """Mask every swear in a line of text, keeping spaces and line breaks."""
-    return re.sub(r"\S+", lambda m: mask_word(m.group(0), mode), text)
+    """Mask every swear in a line of text, keeping spaces and line breaks ('|' in hooks counts as a break)."""
+    return re.sub(r"[^\s|]+", lambda m: mask_word(m.group(0), mode), text)
 
 
 def has_swear(text: str, mode: str = "mask") -> bool:
     """Does the text contain a word that this mode hides (or any swear for titles: use mode='strict')?"""
-    return any(hides(classify(w), mode) for w in text.split())
+    return any(hides(classify(w), mode) for w in re.split(r"[\s|]+", text) if w)
 
 
 _ROOTS = ("fuck", "shit", "bitch", "cunt", "nigg", "fagg", "retard", "chod", "chutiy", "bhosd", "gaand", "lund",

@@ -113,7 +113,7 @@ def test_sheet_flow_new_rows_then_edit_captions_then_ready(cfg, fake_transcribe,
     assert cell(ws, 6, "Status").value.startswith("Failed: That's not a link")
     assert (summary.prepared, summary.rendered, summary.failed, summary.waiting) == (3, 1, 1, 1)
     folders = [p for p in cell(ws, 4, "Clip folders").value.splitlines()]
-    assert len(folders) == 2 and all("first" in f and "clip 0.1" in f or "clip 0.4" in f for f in folders)
+    assert len(folders) == 2 and all("first" in f and ("clip 0.1" in f or "clip 0.4" in f) for f in folders)
     assert cell(ws, 4, "Hooks used").value == "1) FIRST HOOK\n2) (none)"
     assert cell(ws, 5, "Videos").value.endswith("clip.mp4")
     assert "your clip times" in cell(ws, 4, "Notes").value and "loudest" in cell(ws, 5, "Notes").value
@@ -142,9 +142,15 @@ def test_sheet_flow_new_rows_then_edit_captions_then_ready(cfg, fake_transcribe,
                for p in work_ass)
 
     # finished rows are left alone; Redo makes them again
-    before = summary.prepared
     summary = sheet.run(cfg, path=path)
     assert summary.prepared == 0 and summary.rendered == 0
+    wb = load_workbook(path)
+    ws = wb["Videos"]
+    cell(ws, 5, "Status").value = "Redo"
+    wb.save(path)
+    summary = sheet.run(cfg, path=path)
+    assert (summary.prepared, summary.rendered) == (1, 1)  # row 5 doesn't check captions: made in one go
+    assert cell(load_workbook(path)["Videos"], 5, "Status").value == "Done"
 
 
 def test_sheet_results_go_to_a_copy_when_excel_holds_the_file(cfg, tmp_path, monkeypatch):

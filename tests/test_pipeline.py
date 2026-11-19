@@ -6,12 +6,9 @@ that yt-dlp downloads from with the same partial-download code path."""
 from __future__ import annotations
 
 import json
-import re
 import shutil
-import subprocess
 
 import numpy as np
-import pytest
 
 from clipper import media
 from clipper.analysis import envelope_db, integrated_lufs

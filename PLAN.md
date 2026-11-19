@@ -26,6 +26,11 @@ Changes from the plan, made while building:
 - **New videos and livestreams:** with no "Most replayed" graph, the tool uses live-chat replay bursts (finished streams), then timestamps in the comments, then loudness.
 - **Output folders are named after the YouTube video** (`output/<title>/clip 12.30-12.58/`), and only one captions version is made: English, or Hindi in English letters.
 - **Facecam split layout (planned layout C, now built):** an Auto mode finds the webcam with a face detector (YuNet, MIT, bundled, 230 KB) plus border detection over sampled frames; corners and exact percent boxes also work. Top half = enlarged webcam, bottom half = gameplay taken away from the webcam's corner (blurred over if it can't be avoided). preview.jpg is made at the captions step so the layout can be checked.
+- **Swear words are captioned as said and masked as f\*\*k** (first and last letter kept, English and Hindi). Whisper gets uncensored hint words, Gemini is told to write swears in full, and censored ones are put back from the local model. captions.srt keeps the real words. Titles, descriptions and hashtags never contain swears (no ads otherwise); an optional beep is available.
+- **Made-up caption lines are dropped** ("Thanks for watching", subtitle credits, loops), and automatic clips skip a quiet opening.
+- **Effects:** zoom cut on the big moments (gameplay only), word and hook pop, shadow; optional progress bar, watermark and self-made sounds. Effects and Swear words columns in the sheet.
+- **Quality:** 1440p sources for layouts that enlarge (never HDR), accurate scaling with clean-up and adaptive sharpening only where enlarged, better encoder settings with a fallback tier for older GPUs.
+- **For friends:** menu.cmd, `clipper update` that updates git copies itself, and README.md rewritten as a full manual with tests that keep it complete.
 - **Typed clip times are followed:** the cut is only nudged by about a second, never stretched to the automatic minimum length.
 - **Text sizes come from the font file's own metrics.** The Hindi-capable font draws much smaller than its size number suggests otherwise.
 

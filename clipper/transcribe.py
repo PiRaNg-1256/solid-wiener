@@ -194,7 +194,7 @@ def made_up(text: str, avg_logprob: float, no_speech_prob: float, compression_ra
 def hint_text(language: str, vocabulary: list[str] | None = None) -> str:
     """Words the model should expect in every 30-second window: names from the game, your own words, swears."""
     words = list(dict.fromkeys([v.strip() for v in (vocabulary or []) if v and v.strip()][:24]))
-    words += SWEAR_HINTS.get(language, SWEAR_HINTS["en"])
+    words += SWEAR_HINTS.get(language, [])  # only for languages with a list: others would be nudged to English
     return ", ".join(words)
 
 
@@ -225,8 +225,8 @@ def transcribe(audio: np.ndarray, cfg: CaptionConfig, language: str | None = Non
         vad_parameters={"min_silence_duration_ms": 400},
         beam_size=5,
         condition_on_previous_text=False,
-        initial_prompt=STYLE_PROMPT.get(lang, STYLE_PROMPT["en"]) if task == "transcribe" else None,
-        hotwords=hint_text(lang, list(cfg.vocabulary) + list(vocabulary or [])) if task == "transcribe" else None,
+        initial_prompt=STYLE_PROMPT.get(lang) if task == "transcribe" else None,
+        hotwords=(hint_text(lang, list(cfg.vocabulary) + list(vocabulary or [])) or None) if task == "transcribe" else None,
     )
     words: list[Word] = []
     removed = 0

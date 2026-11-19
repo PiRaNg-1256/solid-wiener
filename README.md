@@ -473,7 +473,8 @@ moments (default 5); `--refresh` reads the info from YouTube again.
 ```
 
 Checks Python, your settings, FFmpeg, the YouTube downloader, the fonts, music, the GPU, the speech model, video
-encoding, the face detector, the Excel sheet and whether a Gemini key is set (it never shows the key).
+encoding, the face detector, the Excel sheet, the output folder and whether a Gemini key is set (it never shows
+the key).
 `--recheck-gpu` forgets the saved GPU test, for example after a driver update.
 
 ### gemini-test: check your Gemini key
