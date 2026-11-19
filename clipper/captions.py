@@ -10,8 +10,8 @@ from pathlib import Path
 
 from PIL import ImageFont
 
-from .config import StyleConfig
-from .layout import OUT_H, OUT_W, Layout
+from .config import EffectsConfig, StyleConfig
+from .layout import OUT_H, OUT_W, UI_BOTTOM, Layout
 from .profanity import mask_text, mask_word, readable
 from .transcribe import Word
 from .util import ass_time, has_devanagari, hex_to_ass, strip_emoji
@@ -19,6 +19,7 @@ from .util import ass_time, has_devanagari, hex_to_ass, strip_emoji
 SENTENCE_END = (".", "?", "!", "।", "…")
 CAPTION_MAX_WIDTH = 940  # px a caption line may use (frame is 1080 wide)
 HOOK_MAX_WIDTH = 900
+BAR_H = 12  # progress bar height in pixels
 CAPTION_GAP = 30  # px between a centred hook box and the caption line under it (the line has its own headroom too)
 
 
@@ -133,7 +134,8 @@ def _styles(style: StyleConfig, layout: Layout, font: Font, credit_font: Font, c
         f"Style: Credit,{credit_font.ass_name},{credit_font.ass_size(style.credit_size)},&H33FFFFFF,&H33FFFFFF,"
         f"&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,8,40,40,{layout.credit_top},1"
     )
-    return f"[V4+ Styles]\n{fmt}\n{caption}\n{hook}\n{credit}\n"
+    bar = "Style: Bar,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1"
+    return f"[V4+ Styles]\n{fmt}\n{caption}\n{hook}\n{credit}\n{bar}\n"
 
 
 def _hook_pad(style: StyleConfig) -> int:
@@ -298,14 +300,19 @@ def build_ass(
     hook: str | None = None,
     credit: str | None = None,
     profanity: str = "mask",
+    effects: EffectsConfig | None = None,
 ) -> str:
     """captions: caption lines, or plain timed words (grouped into lines here). Times are relative to the clip.
     profanity: mask / strict / show, how swear words are shown (captions.srt keeps them as said)."""
+    fx = effects or EffectsConfig()
     font = Font(fonts_dir / style.font_file)
     credit_font = Font(fonts_dir / style.credit_font_file)
     base = hex_to_ass(style.caption_color)
     highlight = hex_to_ass(style.highlight_color)
     events: list[str] = []
+    # the spoken word: bigger and in colour; with word_pop it overshoots a little first, like a bounce
+    active = (r"\fscx100\fscy100\t(0,70,\fscx118\fscy118)\t(70,160,\fscx110\fscy110)" if fx.word_pop
+              else r"\fscx110\fscy110")
 
     caption_bottom = layout.caption_bottom
     if hook and hook.strip():
@@ -319,10 +326,26 @@ def build_ass(
                 top = int(round(layout.hook_center - box / 2))
                 margin = top + pad
                 caption_bottom = max(caption_bottom, top + box + CAPTION_GAP + font.ass_size(style.caption_size))
-            events.append(f"Dialogue: 2,{ass_time(0)},{ass_time(end)},Hook,,0,0,{margin},,{ht.override}{ht.text}")
+            pop = r"\fscx60\fscy60\t(0,130,\fscx106\fscy106)\t(130,230,\fscx100\fscy100)" if fx.hook_pop else ""
+            fade = r"\fad(0,200)" if style.hook_seconds > 0 else ""
+            lead = f"{{{pop}{fade}}}" if pop or fade else ""
+            events.append(f"Dialogue: 2,{ass_time(0)},{ass_time(end)},Hook,,0,0,{margin},,{lead}{ht.override}{ht.text}")
 
     if credit and credit.strip():
         events.append(f"Dialogue: 0,{ass_time(0)},{ass_time(duration)},Credit,,0,0,0,,{escape(strip_emoji(credit))}")
+
+    if style.watermark.strip():  # small and see-through, bottom-left of the gameplay, above YouTube's own text
+        gx, gy, gw, gh = layout.gameplay
+        y = min(gy + gh - 22, UI_BOTTOM - 30)
+        events.append(f"Dialogue: 0,{ass_time(0)},{ass_time(duration)},Credit,,0,0,0,,"
+                      rf"{{\an1\pos({gx + 26},{y})\1a&H50&\3a&H50&}}{escape(strip_emoji(style.watermark.strip()))}")
+
+    if fx.progress_bar:  # a dim track and a bar in the highlight colour that fills up over the clip
+        shape = f"m 0 0 l {OUT_W} 0 l {OUT_W} {BAR_H} l 0 {BAR_H}"
+        events.append(f"Dialogue: 0,{ass_time(0)},{ass_time(duration)},Bar,,0,0,0,,"
+                      rf"{{\an7\pos(0,0)\p1\1c&HFFFFFF&\1a&HB4&}}{shape}{{\p0}}")
+        events.append(f"Dialogue: 1,{ass_time(0)},{ass_time(duration)},Bar,,0,0,0,,"
+                      rf"{{\an7\pos(0,0)\p1\1c{highlight}\fscx0\t(0,{int(duration * 1000)},\fscx100)}}{shape}{{\p0}}")
 
     lines = captions if captions and isinstance(captions[0], CaptionLine) else make_lines(captions, style, fonts_dir, duration)
     for line in lines:
@@ -344,7 +367,7 @@ def build_ass(
             pieces = []
             for xi, text in enumerate(shown):
                 t = escape(text)
-                pieces.append(rf"{{\c{highlight}\fscx110\fscy110}}{t}{{\c{base}\fscx100\fscy100}}" if xi == wi else t)
+                pieces.append(rf"{{\c{highlight}{active}}}{t}{{\c{base}\fscx100\fscy100}}" if xi == wi else t)
             fade = r"\fad(80,0)" if wi == 0 else ""
             prefix = f"{{{fade}{size_tag}}}" if fade or size_tag else ""
             events.append(f"Dialogue: 1,{ass_time(start)},{ass_time(end)},Caption,,0,0,0,,{prefix}{' '.join(pieces)}")

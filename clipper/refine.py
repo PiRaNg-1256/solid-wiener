@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .analysis import loudest_time
+from .analysis import loudest_time, smooth_db
 from .config import ClipConfig
 from .transcribe import Word
 
@@ -107,6 +107,31 @@ def skip_dead_air(s: float, e: float, words: list[Word], env_times: np.ndarray, 
     if inside_word(target, words):
         return s, ""
     return round(target, 3), f"skipped {target - s:.1f}s of quiet at the start"
+
+
+def pick_punches(env_times: np.ndarray, env_db: np.ndarray, s: float, e: float, payoff: float, most: int = 2,
+                 hold: float = 0.6, apart: float = 4.0) -> list[tuple[float, float]]:
+    """Zoom-cut windows (relative to the clip start), most important first: the most intense moment, then other
+    loud moments at least `apart` seconds away and nearly as loud. None in the first or last 0.8 s (the hook pops
+    in, the clip ends)."""
+    if most <= 0 or len(env_times) == 0:
+        return []
+    sm = smooth_db(env_times, env_db, 0.3)
+    inside = (env_times >= s + 0.8) & (env_times <= e - 0.8 - hold)
+    if not inside.any():
+        return []
+    times, levels = env_times[inside], sm[inside]
+    chosen: list[float] = []
+    if s + 0.8 <= payoff <= e - 0.8 - hold:
+        chosen.append(payoff)
+    top = float(levels.max())
+    for i in np.argsort(-levels):
+        if len(chosen) >= most or levels[i] < top - 4.0:
+            break
+        t = float(times[i])
+        if all(abs(t - c) >= apart for c in chosen):
+            chosen.append(t)
+    return [(round(t - s - 0.04, 3), round(t - s + hold, 3)) for t in chosen]
 
 
 def refine_window(

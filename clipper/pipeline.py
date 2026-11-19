@@ -22,13 +22,13 @@ import numpy as np
 
 from . import __version__, align, audio, captions, db, facecam, gemini, media, package, profanity, render, signals, sponsorblock
 from .analysis import envelope_db, pseudo_heatmap
-from .config import Config, validate
+from .config import Config, apply_effects_preset, validate
 from .download import cut_local, download_audio, download_segment
 from .hinglish import to_latin
 from .layout import build_layout
 from .metadata import VideoInfo, chapter_at, fetch_info
 from .moments import Moment, find_moments, manual_moment
-from .refine import refine_window
+from .refine import pick_punches, refine_window
 from .transcribe import Transcript, Word, transcribe
 from .util import ClipperError, fmt_time, has_devanagari, is_url, normalize_url, slugify
 
@@ -58,6 +58,9 @@ class MakeOptions:
     refresh: bool = False
     review: bool = False  # stop after the captions so they can be edited, render later
     facecam: str | None = None  # "" = off, auto, a corner, or x,y,w,h in percent (None = use config)
+    effects: str | None = None  # default | none | all (None = use config)
+    profanity: str | None = None  # mask | strict | show (None = use config)
+    bleep: bool | None = None  # beep the hidden swears (None = use config)
 
 
 @dataclass
@@ -113,6 +116,11 @@ def _with_overrides(cfg: Config, opts: MakeOptions) -> Config:
         cfg.captions.hindi_script = opts.hindi_script.lower()
     if opts.facecam is not None:
         cfg.style.facecam = opts.facecam
+    apply_effects_preset(cfg, opts.effects)
+    if opts.profanity:
+        cfg.captions.profanity = opts.profanity
+    if opts.bleep is not None:
+        cfg.captions.bleep = "all" if opts.bleep else "off"
     facecam.parse_hint(cfg.style.facecam)  # a readable error now rather than halfway through
     if opts.lang not in (None, "", "auto") and opts.lang not in ("en", "hi"):
         raise ClipperError("Caption language must be auto, en or hi")
@@ -432,6 +440,7 @@ def prepare_clip(
         "source_start": round(source_start, 3),
         "source_end": round(source_end, 3),
         "payoff": round(refined.payoff - s, 3),
+        "punches": [list(p) for p in pick_punches(env_t, env_db, s, e, refined.payoff, 5)],  # most important first
         "has_audio": seg.has_audio,
         "width": seg.width,
         "height": seg.height,
@@ -454,7 +463,9 @@ def prepare_clip(
         "game": game[0] if game else None,
         "music": {"path": str(track.path), "credit": track.credit} if track else None,
         "settings": {"layout": cfg.style.layout, "zoom": cfg.style.zoom, "credit": cfg.style.credit,
-                     "captions": cfg.captions.enabled, "music": opts.music, "facecam": cfg.style.facecam},
+                     "captions": cfg.captions.enabled, "music": opts.music, "facecam": cfg.style.facecam,
+                     "effects": opts.effects or "default", "profanity": opts.profanity,
+                     "bleep": None if opts.bleep is None else ("all" if opts.bleep else "off")},
         "facecam": _facecam_record(cfg.style.facecam, cam),
     }
     (folder / JOB_FILE).write_text(json.dumps(job, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -485,14 +496,22 @@ def _facecam_record(setting: str, cam: facecam.FacecamBox | None) -> dict | None
             "how": cam.how if cam else "no webcam found"}
 
 
+def punches_for(job: dict, cfg: Config) -> list[tuple[float, float]]:
+    """The zoom cuts to use, from the moments found when the clip was prepared."""
+    if not cfg.effects.zoom_punch or cfg.effects.zoom_amount <= 0:
+        return []
+    found = [tuple(p) for p in job.get("punches") or []]  # stored most important first
+    return sorted(found[: cfg.effects.max_punches])
+
+
 def _layout_for(job: dict, cfg: Config):
     cam = job.get("facecam") or {}
-    cas = media.ffmpeg_has("filters", "cas")
+    look = dict(cas=media.ffmpeg_has("filters", "cas"), punches=punches_for(job, cfg),
+                punch_amount=cfg.effects.zoom_amount, shadow=cfg.effects.shadow)
     if cam.get("box"):
         return build_layout(cfg.style.layout, job["width"], job["height"], cfg.style.zoom, facecam=cam["box"],
-                            share=cfg.style.facecam_share, face=tuple(cam["face"]) if cam.get("face") else None,
-                            cas=cas)
-    return build_layout(cfg.style.layout, job["width"], job["height"], cfg.style.zoom, cas=cas)
+                            share=cfg.style.facecam_share, face=tuple(cam["face"]) if cam.get("face") else None, **look)
+    return build_layout(cfg.style.layout, job["width"], job["height"], cfg.style.zoom, **look)
 
 
 def _overlay_files(work: Path, cfg: Config, layout, lines, duration: float, hook: str, video: VideoInfo) -> None:
@@ -507,7 +526,7 @@ def _overlay_files(work: Path, cfg: Config, layout, lines, duration: float, hook
     (work / "clip.ass").write_text(
         captions.build_ass(lines, layout=layout, style=cfg.style, fonts_dir=cfg.fonts_dir, duration=duration,
                            hook=hook or None, credit=package.credit_line(cfg, video),
-                           profanity=cfg.captions.profanity),
+                           profanity=cfg.captions.profanity, effects=cfg.effects),
         encoding="utf-8",
     )
 
@@ -577,6 +596,11 @@ def render_clip(folder: Path, cfg: Config, rep: Reporter | None = None, override
     cfg.style.layout, cfg.style.zoom = settings["layout"], settings["zoom"]
     cfg.style.credit, cfg.captions.enabled = settings["credit"], settings["captions"]
     cfg.style.facecam = settings.get("facecam") or ""
+    apply_effects_preset(cfg, settings.get("effects"))
+    if settings.get("profanity"):  # chosen for this clip (sheet column or command option), else config.yaml
+        cfg.captions.profanity = settings["profanity"]
+    if settings.get("bleep"):
+        cfg.captions.bleep = settings["bleep"]
     validate(cfg)
     media.init(cfg.ffmpeg)
 
@@ -619,8 +643,9 @@ def render_clip(folder: Path, cfg: Config, rep: Reporter | None = None, override
         _overlay_files(work, cfg, layout, lines, duration, hook, video)
         with rep.step("Mixing game audio and music"):
             bleeps = profanity.bleep_spans(spoken, cfg.captions.profanity) if cfg.captions.bleep == "all" else []
+            sfx = ([("whoosh", 0.0)] + [("hit", a + 0.04) for a, _ in punches_for(job, cfg)]) if cfg.effects.sounds else []
             mixed = audio.prepare_audio(segment, job["has_audio"], s, e, spoken, track, cfg.music, cfg.render, work,
-                                        bleeps=bleeps)
+                                        bleeps=bleeps, sfx=sfx)
         for old in ("clip.mp4", "clip_nomusic.mp4", "thumb.jpg", "preview.jpg"):
             (folder / old).unlink(missing_ok=True)
         with rep.step("Rendering the Short"):

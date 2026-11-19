@@ -43,6 +43,7 @@ style:
   facecam: ""               # webcam big on top, gameplay below: auto, bottom-right (or another corner), or
                             # x,y,w,h in percent of the frame; "" = off (the sheet's Facecam column sets it per row)
   facecam_share: 0.5        # how much of the height the webcam gets (0.3 to 0.6)
+  watermark: ""             # your channel name shown small on the gameplay, e.g. "@MyChannel" ("" = none)
 
 captions:
   enabled: true
@@ -52,9 +53,23 @@ captions:
   model: auto               # auto = large-v3 on an NVIDIA GPU, small on the CPU.
                             # Or pick: tiny / base / small / medium / large-v3 (bigger = more accurate, slower)
   device: auto              # auto = use the NVIDIA GPU if it passes a one-time test, else the CPU. Or: cpu / cuda
+  profanity: mask           # swear words: mask = shown as f**k (captions.srt keeps the real word),
+                            # strict = also mild ones (damn, hell, saala), show = as said. Slurs are always masked.
+  bleep: "off"              # "off", or "all" = also beep the masked swear words in the audio
+  vocabulary: []            # names and words the speech model should expect, e.g. [YourName, YourFriend]
   gemini:                   # optional, free: uses the gemini_api_key at the top of this file
     models: [gemini-flash-latest, gemini-flash-lite-latest]   # tried in order; free-tier models
     timeout_seconds: 45
+
+effects:
+  zoom_punch: true          # the gameplay jumps a little closer on the big moment(s), then back
+  zoom_amount: 0.08         # 0.08 = 8% closer (0 to 0.3)
+  max_punches: 2            # the most intense moment plus one more loud one (0 to 5)
+  word_pop: true            # the word being said pops slightly bigger
+  hook_pop: true            # the hook pops in at the start
+  progress_bar: false       # thin bar at the top that fills up as the Short plays
+  sounds: false             # a soft whoosh when the hook appears and a low hit on each zoom
+  shadow: true              # blur layout: soft shadow under the gameplay and darker corners
 
 music:
   enabled: true
@@ -82,6 +97,8 @@ youtube:
                             # (log into a throwaway Google account in Firefox first)
   cookies_file: ""
   sleep_between_requests: 0
+  max_height: auto          # auto = 1440p when the picture gets enlarged (crop layout, facecam), else 1080p.
+                            # Or: 720 / 1080 / 1440 / 2160 (bigger = sharper, slower to download)
 
 default_hashtags: ["#gaming", "#shorts"]
 
@@ -90,18 +107,21 @@ title_templates:
   - "Wait for it… 💀 {tag} #shorts"
   - "Nobody expected this in {game} 🤯 #shorts"
 
-# Games are detected from the video title (first match wins) to pick hashtags.
-# Add your own the same way.
+# Games are detected from the video title (first match wins) to pick hashtags. Their vocabulary (names and
+# places) helps the speech model and Gemini spell them right. Add your own games the same way.
 games:
   gta6:
     name: GTA 6
     keywords: [gta 6, gta vi, gta6, gtavi, grand theft auto vi, grand theft auto 6]
     hashtags: ["#GTA6", "#GTAVI", "#GrandTheftAuto"]
+    vocabulary: [GTA 6, Vice City, Leonida, Lucia, Jason, Rockstar, Port Gellhorn, Grassrivers, Ambrosia, Leonida Keys]
   gta5:
     name: GTA 5
     keywords: [gta 5, gta v, gta5, gtav, gta online, grand theft auto v]
     hashtags: ["#GTA5", "#GTAV", "#GTAOnline"]
+    vocabulary: [GTA, Los Santos, Michael, Franklin, Trevor, Lamar, Lester, Vinewood, Sandy Shores, Paleto Bay, Oppressor]
   rdr2:
     name: Red Dead Redemption 2
     keywords: [rdr2, rdr 2, red dead redemption 2, red dead 2]
     hashtags: ["#RDR2", "#RedDeadRedemption2"]
+    vocabulary: [Arthur, Dutch, John Marston, Sadie, Micah, Saint Denis, Valentine, Blackwater]

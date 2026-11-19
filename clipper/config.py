@@ -48,6 +48,7 @@ class StyleConfig:
     credit_text: str = "footage: {creator}"
     facecam: str = ""  # "" = off; auto; a corner (bottom-right ...); or x,y,w,h in percent of the frame
     facecam_share: float = 0.5  # facecam layout: how much of the height the webcam gets (0.3-0.6)
+    watermark: str = ""  # your channel name shown small on the gameplay, e.g. "@MyChannel" ("" = none)
 
 
 @dataclass
@@ -69,6 +70,18 @@ class CaptionConfig:
     bleep: str = "off"  # off | all = also beep the swears hidden on screen
     vocabulary: list[str] = field(default_factory=list)  # names and words the speech model should expect
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
+
+
+@dataclass
+class EffectsConfig:
+    zoom_punch: bool = True  # the gameplay jumps a little closer on the big moment(s), then back
+    zoom_amount: float = 0.08  # 0.08 = 8% closer
+    max_punches: int = 2  # the most intense moment plus one more loud one
+    word_pop: bool = True  # the word being said pops slightly bigger
+    hook_pop: bool = True  # the hook pops in at the start
+    progress_bar: bool = False  # thin bar at the top that fills up as the Short plays
+    sounds: bool = False  # a soft whoosh when the hook appears and a low hit on each zoom
+    shadow: bool = True  # blur layout: soft shadow under the gameplay and darker corners
 
 
 @dataclass
@@ -156,6 +169,7 @@ class Config:
     style: StyleConfig = field(default_factory=StyleConfig)
     captions: CaptionConfig = field(default_factory=CaptionConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
+    effects: EffectsConfig = field(default_factory=EffectsConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
     youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
     sheet: SheetConfig = field(default_factory=SheetConfig)
@@ -233,6 +247,10 @@ def validate(cfg: Config) -> None:
         raise ClipperError("captions.hindi_script must be latin or devanagari")
     if cfg.captions.device not in ("cpu", "cuda", "auto"):
         raise ClipperError("captions.device must be auto, cpu or cuda")
+    if not 0.0 <= cfg.effects.zoom_amount <= 0.3:
+        raise ClipperError("effects.zoom_amount must be between 0 and 0.3")
+    if not 0 <= cfg.effects.max_punches <= 5:
+        raise ClipperError("effects.max_punches must be between 0 and 5")
     cfg.youtube.max_height = cfg.youtube.max_height.strip().lower().rstrip("p")
     if cfg.youtube.max_height not in ("auto", "720", "1080", "1440", "2160"):
         raise ClipperError("youtube.max_height must be auto, 720, 1080, 1440 or 2160")
@@ -248,6 +266,21 @@ def validate(cfg: Config) -> None:
         raise ClipperError("render.encoder must be auto, libx264, h264_nvenc, h264_amf or h264_qsv")
     for color in (cfg.style.caption_color, cfg.style.highlight_color):
         hex_to_ass(color)  # raises a readable error if the colour is malformed
+
+
+EFFECT_PRESETS = ("default", "none", "all")
+
+
+def apply_effects_preset(cfg: Config, preset: str | None) -> None:
+    """'none' = a clean clip without effects; 'all' = every effect including the progress bar and sounds."""
+    preset = (preset or "default").strip().lower()
+    if preset not in EFFECT_PRESETS:
+        raise ClipperError("Effects must be Default, None or All")
+    if preset == "default":
+        return
+    on = preset == "all"
+    fx = cfg.effects
+    fx.zoom_punch = fx.word_pop = fx.hook_pop = fx.progress_bar = fx.sounds = fx.shadow = on
 
 
 KEY_BLOCK = """# ===== Gemini API key (optional, free) =====

@@ -155,6 +155,42 @@ def bleep(samples: np.ndarray, sr: int, spans: list[tuple[float, float]], freq: 
     return samples * keep[:, None] + beep[:, None]
 
 
+def sound_effect(kind: str, sr: int) -> np.ndarray:
+    """Made here from scratch, so no licence worries: 'whoosh' (airy noise sweep) or 'hit' (low thump)."""
+    rng = np.random.default_rng(7)
+    if kind == "whoosh":
+        n = int(0.45 * sr)
+        t = np.arange(n) / sr
+        noise = rng.standard_normal(n).astype(np.float32)
+        out = np.zeros(n, np.float32)
+        cutoff = 300 + 5000 * np.sin(np.pi * t / t[-1]) ** 2  # opens then closes: the swoosh
+        alpha = 1 - np.exp(-2 * np.pi * cutoff / sr)
+        acc = 0.0
+        for i in range(n):  # one-pole low-pass with a moving cut-off
+            acc += alpha[i] * (noise[i] - acc)
+            out[i] = acc
+        out *= np.sin(np.pi * t / t[-1]) ** 2
+        return 0.25 * out / (np.abs(out).max() + 1e-9)
+    n = int(0.5 * sr)
+    t = np.arange(n) / sr
+    freq = 45 + 75 * np.exp(-t / 0.05)  # pitch drops fast: a thump, not a beep
+    body = np.sin(2 * np.pi * np.cumsum(freq) / sr) * np.exp(-t / 0.12)
+    click = rng.standard_normal(n) * np.exp(-t / 0.004) * 0.3
+    out = (body + click).astype(np.float32)
+    return 0.6 * out / (np.abs(out).max() + 1e-9)
+
+
+def add_effects(samples: np.ndarray, sr: int, sfx: list[tuple[str, float]]) -> np.ndarray:
+    out = samples.copy()
+    for kind, at in sfx:
+        clip = sound_effect(kind, sr)
+        a = int(max(0.0, at) * sr)
+        b = min(len(out), a + len(clip))
+        if b > a:
+            out[a:b] += clip[: b - a, None]
+    return out
+
+
 def prepare_audio(
     segment: Path,
     has_audio: bool,
@@ -166,6 +202,7 @@ def prepare_audio(
     render_cfg: RenderConfig,
     workdir: Path,
     bleeps: list[tuple[float, float]] = (),
+    sfx: list[tuple[str, float]] = (),
 ) -> AudioResult:
     """words: relative to the clip start. Writes WAV files into workdir. bleeps: (start, end) times where the
     game audio is replaced by a beep (hidden swear words)."""
@@ -179,6 +216,8 @@ def prepare_audio(
     _fade(game, SR, 0.015, 0.015)
     if bleeps:
         game = bleep(game, SR, bleeps)
+    if sfx:  # edit sounds ride on the game audio, so they are in both versions of the clip
+        game = add_effects(game, SR, sfx)
     game_lufs = integrated_lufs(game, SR)
 
     game_out = workdir / "game.wav"

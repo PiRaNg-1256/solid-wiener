@@ -34,6 +34,19 @@ def enlarge(factor: float, cas: bool = True) -> tuple[str, str]:
     return before, after
 
 
+def punch(src: str, out: str, w: int, h: int, windows, amount: float = 0.08) -> str:
+    """Filters from [src] to [out]: during each (start, end) window the picture jumps `amount` closer (a 'zoom
+    cut' on the big moment), then back. A second, enlarged copy is switched on by time, so the timing stays exact."""
+    windows = [(a, b) for a, b in windows or [] if b > a]
+    if not windows or amount <= 0:
+        return f"[{src}]null[{out}]"
+    zw, zh = _even(w * (1 + amount)), _even(h * (1 + amount))
+    when = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in windows)
+    return (f"[{src}]split=2[{src}a][{src}b];"
+            f"[{src}b]scale={zw}:{zh}:flags={SCALE_FLAGS},crop={w}:{h}:(iw-{w})/2:(ih-{h})/2[{src}z];"
+            f"[{src}a][{src}z]overlay=0:0:enable='{when}'[{out}]")
+
+
 def _even(x: float) -> int:
     """Even size of at least 2 pixels (video sizes must be even)."""
     return max(2, int(round(x / 2)) * 2)
@@ -44,7 +57,8 @@ def _pos(x: float) -> int:
     return max(0, int(round(x / 2)) * 2)
 
 
-def blur_layout(src_w: int, src_h: int, zoom: float = 1.25, cas: bool = True) -> Layout:
+def blur_layout(src_w: int, src_h: int, zoom: float = 1.25, cas: bool = True, punches=(), punch_amount: float = 0.08,
+                shadow: bool = False) -> Layout:
     """Gameplay in the middle, a blurred copy of it filling the rest of the frame."""
     zoom = max(1.0, zoom)
     crop_w, crop_h = _even(src_w / zoom), _even(src_h)
@@ -56,13 +70,19 @@ def blur_layout(src_w: int, src_h: int, zoom: float = 1.25, cas: bool = True) ->
     fg_y = _even(max(330, (OUT_H - fg_h) / 2 - 60))
     fg_bottom = fg_y + fg_h
     pre, post = enlarge(fg_w / crop_w, cas)
+    depth = ""
+    if shadow:  # a soft dark halo under the gameplay and darker corners: the gameplay looks lifted off the background
+        q = 270 / OUT_W
+        depth = (f"drawbox=x={int(fg_x * q) - 3}:y={int(fg_y * q) + 2}:w={int(fg_w * q) + 6}:h={int(fg_h * q) + 6}:"
+                 "color=black@0.6:t=fill,")
     flt = (
         "split=2[clipbg][clipfg];"
         # blur a small copy then scale it up: same look, a fraction of the work
-        "[clipbg]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=10:2,"
-        f"eq=brightness=-0.08:saturation=1.15,scale={OUT_W}:{OUT_H},setsar=1[clipbgo];"
+        f"[clipbg]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,{depth}boxblur=10:2,"
+        f"eq=brightness=-0.08:saturation=1.15,{'vignette=PI/5,' if shadow else ''}scale={OUT_W}:{OUT_H},setsar=1[clipbgo];"
         f"[clipfg]crop={crop_w}:{crop_h}:(iw-{crop_w})/2:(ih-{crop_h})/2,{pre}scale={fg_w}:{fg_h}:flags={SCALE_FLAGS}"
-        f"{post},setsar=1[clipfgo];"
+        f"{post},setsar=1[clipfgs];"
+        + punch("clipfgs", "clipfgo", fg_w, fg_h, punches, punch_amount) + ";"
         f"[clipbgo][clipfgo]overlay={fg_x}:{fg_y}"
     )
     return Layout(
@@ -75,7 +95,7 @@ def blur_layout(src_w: int, src_h: int, zoom: float = 1.25, cas: bool = True) ->
     )
 
 
-def crop_layout(src_w: int, src_h: int, cas: bool = True) -> Layout:
+def crop_layout(src_w: int, src_h: int, cas: bool = True, punches=(), punch_amount: float = 0.08) -> Layout:
     """Fill the whole screen with the centre of the video (cuts off the sides of 16:9 footage)."""
     target = OUT_W / OUT_H
     if src_w / src_h > target:
@@ -84,12 +104,14 @@ def crop_layout(src_w: int, src_h: int, cas: bool = True) -> Layout:
         crop_w, crop_h = _even(src_w), _even(src_w / target)
     pre, post = enlarge(OUT_W / crop_w, cas)
     flt = f"crop={crop_w}:{crop_h}:(iw-{crop_w})/2:(ih-{crop_h})/2,{pre}scale={OUT_W}:{OUT_H}:flags={SCALE_FLAGS}{post},setsar=1"
+    if punches:
+        flt += "[clipcs];" + punch("clipcs", "clipco", OUT_W, OUT_H, punches, punch_amount) + ";[clipco]null"
     return Layout(name="crop", filter=flt, hook_top=220, caption_bottom=1400, credit_top=1480, gameplay=(0, 0, OUT_W, OUT_H))
 
 
 def facecam_layout(
     src_w: int, src_h: int, cam: tuple[int, int, int, int], share: float = 0.5, face: tuple[float, float] | None = None,
-    cas: bool = True,
+    cas: bool = True, punches=(), punch_amount: float = 0.08,
 ) -> Layout:
     """Streamer's webcam enlarged on top, gameplay below. The webcam's original spot is kept out of the
     gameplay part (or blurred over if it can't be avoided), so the face never shows twice."""
@@ -142,7 +164,8 @@ def facecam_layout(
     flt = (
         "split=2[clipcam][clipgame];"
         f"[clipcam]crop={kw}:{kh}:{kx}:{ky},{cam_pre}scale={OUT_W}:{top_h}:flags={SCALE_FLAGS}{cam_post},setsar=1[cliptop];"
-        f"{game},{game_pre}scale={OUT_W}:{bot_h}:flags={SCALE_FLAGS}{game_post},setsar=1[clipbot];"
+        f"{game},{game_pre}scale={OUT_W}:{bot_h}:flags={SCALE_FLAGS}{game_post},setsar=1[clipbots];"
+        + punch("clipbots", "clipbot", OUT_W, bot_h, punches, punch_amount) + ";"
         f"[cliptop][clipbot]vstack,drawbox=x=0:y={top_h - 3}:w={OUT_W}:h=6:color=black@0.5:t=fill"
     )
     return Layout(
@@ -157,14 +180,14 @@ def facecam_layout(
 
 
 def build_layout(name: str, src_w: int, src_h: int, zoom: float = 1.25, facecam: tuple | None = None,
-                 share: float = 0.5, face: tuple[float, float] | None = None, cas: bool = True) -> Layout:
-    """cas: FFmpeg has the 'cas' sharpening filter (any FFmpeg from 2021 on); otherwise 'unsharp' is used."""
+                 share: float = 0.5, face: tuple[float, float] | None = None, cas: bool = True,
+                 punches=(), punch_amount: float = 0.08, shadow: bool = False) -> Layout:
+    """cas: FFmpeg has the 'cas' sharpening filter (any FFmpeg from 2021 on); otherwise 'unsharp' is used.
+    punches: (start, end) times of zoom cuts on the gameplay. shadow: blur layout's soft shadow and vignette."""
     if src_w <= 0 or src_h <= 0:
         raise ValueError("source video has no size")
     if facecam is not None:
-        return facecam_layout(src_w, src_h, tuple(int(v) for v in facecam), share, face, cas)
-    if src_w / src_h < 0.75:  # already vertical (e.g. a Short): just fill the screen
-        return crop_layout(src_w, src_h, cas)
-    if name == "crop":
-        return crop_layout(src_w, src_h, cas)
-    return blur_layout(src_w, src_h, zoom, cas)
+        return facecam_layout(src_w, src_h, tuple(int(v) for v in facecam), share, face, cas, punches, punch_amount)
+    if src_w / src_h < 0.75 or name == "crop":  # already vertical (e.g. a Short) or chosen: fill the screen
+        return crop_layout(src_w, src_h, cas, punches, punch_amount)
+    return blur_layout(src_w, src_h, zoom, cas, punches, punch_amount, shadow)

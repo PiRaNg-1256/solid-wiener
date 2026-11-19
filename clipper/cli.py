@@ -89,8 +89,13 @@ def make(
     lang: Optional[str] = typer.Option(None, help="Caption language: auto, en or hi"),
     translate: Optional[bool] = typer.Option(None, "--translate/--no-translate", help="Hindi speech -> English captions"),
     hindi_script: Optional[str] = typer.Option(
-        None, "--hindi-script", help="Hindi captions: both (two files), latin (English letters) or devanagari"
+        None, "--hindi-script", help="Hindi captions: latin (English letters, the default) or devanagari"
     ),
+    effects: Optional[str] = typer.Option(None, help="default (zoom cut, word pop, hook pop, shadow), none, or all "
+                                          "(adds the progress bar and sound effects)"),
+    profanity: Optional[str] = typer.Option(None, help="Swear words: mask (shown as f**k), strict (also damn/hell), "
+                                            "or show"),
+    bleep: Optional[bool] = typer.Option(None, "--bleep/--no-bleep", help="Also beep the hidden swear words"),
     no_captions: bool = typer.Option(False, "--no-captions", help="Don't add captions"),
     no_gemini: bool = typer.Option(False, "--no-gemini", help="Don't ask Gemini, use only the local speech model"),
     no_credit: bool = typer.Option(False, "--no-credit", help="Don't show the creator's name on screen"),
@@ -110,6 +115,9 @@ def make(
         layout=layout,
         zoom=zoom,
         facecam=facecam,
+        effects=effects.lower() if effects else None,
+        profanity=profanity.lower() if profanity else None,
+        bleep=bleep,
         music=music,
         lang=lang.lower() if lang else None,
         translate=translate,

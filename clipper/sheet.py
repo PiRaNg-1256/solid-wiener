@@ -69,6 +69,12 @@ COLUMNS = [
            "or say where it is: Bottom right, Bottom left, Top right, Top left. Exact box: x,y,w,h in percent of "
            "the frame (75,70,25,30). Off = normal layout. Empty = normal layout.",
            choices="Auto,Bottom right,Bottom left,Top right,Top left,Off"),
+    Column("effects", "Effects", 10, "Default = zoom cut on the big moment, word pop, hook pop, shadow (change them in "
+           "config.yaml). None = a clean clip without effects. All = also the progress bar and sound effects. "
+           "Empty = Default.", choices="Default,None,All"),
+    Column("swears", "Swear words", 12, "Mask = shown as f**k in the captions (captions.srt keeps the real word). "
+           "Mask + beep = also beeped in the audio. Show = as said (slurs are always masked). Empty = Mask "
+           "(or what config.yaml says).", choices="Mask,Mask + beep,Show"),
     Column("music", "Music", 16, "Random = a random track from assets\\music, None = no music, or the name of a file "
            "in assets\\music. Empty = Random.", choices="Random,None"),
     Column("credit", "Show credit", 9, "Show 'footage: @creator' on the video. Empty = Yes.", choices="Yes,No"),
@@ -243,6 +249,9 @@ class RowJob:
     zoom: float | None = None
     music: str | None = None
     facecam: str | None = None
+    effects: str | None = None
+    profanity: str | None = None
+    bleep: bool | None = None
     credit: bool | None = None
     gemini: bool | None = None
     game: str | None = None
@@ -252,14 +261,15 @@ class RowJob:
         return MakeOptions(
             hooks=self.hooks or None, slices=self.slices or None, count=self.count, lang=self.lang,
             translate=self.translate, layout=self.layout, zoom=self.zoom, music=self.music, credit=self.credit,
-            facecam=self.facecam,
+            facecam=self.facecam, effects=self.effects, profanity=self.profanity, bleep=self.bleep,
             gemini=self.gemini, game=self.game, prompt=False, force=self.status == "redo",
             review=self.check_first,
         )
 
     def render_overrides(self) -> dict:
         return {"layout": self.layout, "zoom": self.zoom, "credit": self.credit, "music": self.music,
-                "facecam": self.facecam}
+                "facecam": self.facecam, "effects": self.effects, "profanity": self.profanity,
+                "bleep": None if self.bleep is None else ("all" if self.bleep else "off")}
 
 
 _YES = {"yes", "y", "true", "1", "on", "✓", "x"}
@@ -376,6 +386,18 @@ def parse_row(row: int, cells: dict, cfg: Config) -> RowJob:
     if facecam:
         hint = parse_hint(facecam)  # raises a readable error for anything it doesn't understand
         job.facecam = "off" if hint is None else (",".join(f"{v:g}" for v in hint) if isinstance(hint, tuple) else hint)
+    effects = _text(cells.get("effects")).lower()
+    if effects:
+        if effects not in ("default", "none", "all"):
+            raise ClipperError("'Effects' must be Default, None or All")
+        job.effects = effects
+    swears = re.sub(r"\s+", " ", _text(cells.get("swears")).lower().replace("+", " + ")).strip()
+    if swears:
+        choices = {"mask": ("mask", False), "mask + beep": ("mask", True), "beep": ("mask", True),
+                   "strict": ("strict", False), "show": ("show", False)}
+        if swears not in choices:
+            raise ClipperError("'Swear words' must be Mask, Mask + beep or Show")
+        job.profanity, job.bleep = choices[swears]
     job.credit = _yes_no(cells.get("credit"), "Show credit")
     job.gemini = _yes_no(cells.get("gemini"), "Use Gemini")
     game = _text(cells.get("game")).lower()
