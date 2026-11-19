@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,6 +31,7 @@ class Transcript:
     translated: bool = False
     note: str = ""
     engine: str = ""  # e.g. "large-v3 on GPU (float16)"
+    removed: int = 0  # made-up lines dropped (see made_up)
 
     @property
     def text(self) -> str:
@@ -167,6 +169,28 @@ SWEAR_HINTS = {
 }
 
 
+# Lines speech models invent over music or silence. Credits are never real speech; a streamer may really say
+# "subscribe" or "thank you", so those only go when the model itself wasn't sure.
+_CREDITS = re.compile(r"amara\.org|subtitles? (by|from)|transcri(bed|ption) by|captions? by|translated by|"
+                      r"www\.|\.com\b", re.I)
+_OUTRO = re.compile(r"^(thanks?( you)?( so much| very much)?( for watching| for listening)?|please subscribe|"
+                    r"(like and |don'?t forget to )?subscribe( to (my|the|our) channel)?|see you (in the next video|"
+                    r"next time)|bye(-| )?bye|धन्यवाद|शुक्रिया|सब्सक्राइब( करें)?)[.!?। ]*$", re.I)
+
+
+def made_up(text: str, avg_logprob: float, no_speech_prob: float, compression_ratio: float) -> bool:
+    """Is this recognised line most likely invented by the model (a 'hallucination')?"""
+    clean = " ".join(text.split()).strip()
+    if not clean:
+        return False
+    if _CREDITS.search(clean):
+        return True
+    if compression_ratio > 2.4:  # the same words over and over: the model got stuck in a loop
+        return True
+    unsure = avg_logprob < -0.35 or no_speech_prob > 0.2
+    return bool(_OUTRO.match(clean)) and unsure
+
+
 def hint_text(language: str, vocabulary: list[str] | None = None) -> str:
     """Words the model should expect in every 30-second window: names from the game, your own words, swears."""
     words = list(dict.fromkeys([v.strip() for v in (vocabulary or []) if v and v.strip()][:24]))
@@ -205,12 +229,17 @@ def transcribe(audio: np.ndarray, cfg: CaptionConfig, language: str | None = Non
         hotwords=hint_text(lang, list(cfg.vocabulary) + list(vocabulary or [])) if task == "transcribe" else None,
     )
     words: list[Word] = []
+    removed = 0
     for segment in segments:
+        if made_up(segment.text or "", float(getattr(segment, "avg_logprob", 0.0)),
+                   float(getattr(segment, "no_speech_prob", 0.0)), float(getattr(segment, "compression_ratio", 1.0))):
+            removed += 1
+            continue
         for w in segment.words or []:
             text = (w.word or "").strip()
             if text and w.end > w.start:
                 words.append(Word(float(w.start), float(w.end), text, float(w.probability)))
-    return Transcript(lang, prob, words, task == "translate", note=engine.note, engine=engine.label)
+    return Transcript(lang, prob, words, task == "translate", note=engine.note, engine=engine.label, removed=removed)
 
 
 def model_is_downloaded(name: str) -> bool:

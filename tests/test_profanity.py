@@ -173,3 +173,42 @@ def test_whole_clip(cfg, tmp_path, monkeypatch):
     assert "What the f**k just happened" in post
     meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
     assert "put back as said" in meta["captions"]["gemini_note"]
+
+
+def test_made_up_lines_are_dropped_but_real_speech_stays(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from clipper import transcribe as T
+
+    def seg(text, logprob=-0.2, no_speech=0.01, ratio=1.3):
+        words = [NS(word=" " + w, start=i * 0.3, end=i * 0.3 + 0.25, probability=0.9) for i, w in enumerate(text.split())]
+        return NS(text=text, words=words, avg_logprob=logprob, no_speech_prob=no_speech, compression_ratio=ratio)
+
+    segments = [
+        seg("No way bro, look at this."),
+        seg("Thanks for watching!", logprob=-0.6),  # over the outro music, model unsure
+        seg("Subtitles by the Amara.org community"),  # never real
+        seg("go go go go go go go go go go go go go go go", ratio=3.1),  # stuck in a loop
+        seg("Please subscribe to the channel", logprob=-0.1, no_speech=0.01),  # the streamer really said it
+    ]
+
+    class FakeModel:
+        def transcribe(self, audio, **kwargs):
+            return iter(segments), None
+
+    monkeypatch.setattr(T, "has_speech", lambda audio: True)
+    monkeypatch.setattr(T, "choose_engine", lambda cfg, cache: T.Engine("cpu", "int8", "small"))
+    monkeypatch.setattr(T, "_load_model", lambda engine: FakeModel())
+    result = T.transcribe(np.zeros(16000, np.float32), CaptionConfig(), language="en")
+    text = " ".join(w.text for w in result.words)
+    assert result.removed == 3
+    assert text == "No way bro, look at this. Please subscribe to the channel"
+
+
+def test_unreadable_swears_show_as_stars_in_the_captions_file(cfg):
+    from clipper.captions import make_lines
+
+    words = [Word(0.0, 0.3, "what"), Word(0.3, 0.5, "the"), Word(0.5, 0.6, "["), Word(0.6, 0.8, "__"),
+             Word(0.8, 0.9, "]")]
+    lines = make_lines(words, cfg.style, cfg.fonts_dir, 2.0)
+    assert [w.text for ln in lines for w in ln.words] == ["what", "the", "****"]

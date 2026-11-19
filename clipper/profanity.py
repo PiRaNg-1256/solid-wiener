@@ -222,6 +222,13 @@ def mask_word(text: str, mode: str = "mask") -> str:
     return lead + mask_core(core) + trail
 
 
+def readable(text: str) -> str:
+    """Whisper writes an unheard swear as '[ __ ]' (like YouTube's auto-captions): show it as ****."""
+    if classify(text) == CENSORED and not _STARRED.match(split_word(text.strip())[1]):
+        return "****"
+    return text
+
+
 def mask_text(text: str, mode: str = "mask") -> str:
     """Mask every swear in a line of text, keeping spaces and line breaks."""
     return re.sub(r"\S+", lambda m: mask_word(m.group(0), mode), text)

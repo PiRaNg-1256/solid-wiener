@@ -83,6 +83,32 @@ def _snap_end(e: float, words: list[Word], cuts: list[float], before: float = 1.
     return ((w.end + 0.15), "moved to the end of a word") if w else (e, "as planned")
 
 
+def skip_dead_air(s: float, e: float, words: list[Word], env_times: np.ndarray, env_db: np.ndarray,
+                  look: float = 1.5, most: float = 3.0) -> tuple[float, str]:
+    """Shorts are swiped away in the first second: if the clip opens on a quiet stretch with nobody talking,
+    start just before the first words or the first burst of sound (at most `most` seconds later)."""
+    if len(env_times) == 0 or e - s < 2 * look:
+        return s, ""
+    if any(s - 0.05 <= w.start < s + look for w in words):
+        return s, ""
+    inside = (env_times >= s) & (env_times <= e)
+    if inside.sum() < 5:
+        return s, ""
+    busy = float(np.percentile(env_db[inside], 75))
+    opening = (env_times >= s) & (env_times < s + look)
+    if not opening.any() or float(env_db[opening].mean()) > busy - 8.0:
+        return s, ""  # the opening isn't quiet compared with the rest of the clip
+    events = [w.start - 0.25 for w in words if s < w.start <= s + most + 0.25]
+    loud = np.flatnonzero((env_times > s) & (env_times <= s + most) & (env_db >= busy - 4.0))
+    if len(loud):
+        events.append(float(env_times[loud[0]]) - 0.3)
+    target = min([t for t in events if t > s + 0.3] or [s + most])
+    target = min(target, s + most)
+    if inside_word(target, words):
+        return s, ""
+    return round(target, 3), f"skipped {target - s:.1f}s of quiet at the start"
+
+
 def refine_window(
     start: float,
     end: float,
@@ -118,6 +144,10 @@ def refine_window(
     e, why_e = _snap_end(end, words, cuts)
     notes.append(f"start {why_s}, end {why_e}")
     s, e = max(0.0, s), min(seg_duration, e)
+    s2, why = skip_dead_air(s, e, words, env_times, env_db)
+    if why and e - s2 >= cfg.min_seconds - 3:  # keep it from shrinking far below the minimum length
+        s = s2
+        notes.append(why)
 
     # keep at least a second of reaction after the most intense moment
     if payoff > e - 1.0:

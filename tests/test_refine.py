@@ -69,3 +69,25 @@ def test_your_own_times_are_only_nudged_never_stretched():
     r = refine_window(10.0, 15.0, words=words, cuts=[], env_times=t, env_db=db, seg_duration=40, cfg=ClipConfig(), manual=True)
     assert 9.0 <= r.start <= 10.5 and 14.5 <= r.end <= 16.0  # a 5-second clip stays about 5 seconds
     assert not inside_word(r.start, words) and not inside_word(r.end, words)
+
+
+def test_quiet_opening_is_skipped_but_talking_or_typed_times_are_kept():
+    import numpy as np
+
+    from clipper.config import ClipConfig
+    from clipper.refine import refine_window, skip_dead_air
+    from clipper.transcribe import Word
+
+    times = np.arange(0, 60, 0.1)
+    db = np.where(times < 13.0, -45.0, -18.0)  # quiet until 13 s, then the action
+    words = [Word(13.6 + i * 0.5, 13.6 + i * 0.5 + 0.4, "go") for i in range(20)]
+    s, why = skip_dead_air(10.0, 40.0, words, times, db)
+    assert 12.6 <= s <= 13.4 and "quiet" in why
+    assert skip_dead_air(10.0, 40.0, [Word(10.4, 10.8, "bro")] + words, times, db)[0] == 10.0  # talking at once
+    assert skip_dead_air(10.0, 40.0, words, times, np.full_like(times, -20.0))[0] == 10.0  # not quiet
+    cfg = ClipConfig()
+    auto = refine_window(10.0, 40.0, words=words, cuts=[], env_times=times, env_db=db, seg_duration=60, cfg=cfg)
+    assert auto.start > 12.5 and any("quiet" in n for n in auto.notes)
+    typed = refine_window(10.0, 40.0, words=words, cuts=[], env_times=times, env_db=db, seg_duration=60, cfg=cfg,
+                          manual=True)
+    assert typed.start <= 10.5

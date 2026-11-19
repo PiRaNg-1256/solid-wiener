@@ -12,7 +12,7 @@ from PIL import ImageFont
 
 from .config import StyleConfig
 from .layout import OUT_H, OUT_W, Layout
-from .profanity import mask_text, mask_word
+from .profanity import mask_text, mask_word, readable
 from .transcribe import Word
 from .util import ass_time, has_devanagari, hex_to_ass, strip_emoji
 
@@ -181,7 +181,7 @@ def make_lines(words: list[Word], style: StyleConfig, fonts_dir: Path, duration:
     font = Font(fonts_dir / style.font_file)
     shown: list[CaptionWord] = []
     for w in words:
-        display = clean_word(w.text, uppercase=False)
+        display = clean_word(readable(w.text), uppercase=False)
         if display and w.end > 0 and w.start < duration:
             shown.append(CaptionWord(max(0.0, w.start), min(duration, w.end), w.text, display))
 

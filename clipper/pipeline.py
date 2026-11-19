@@ -318,6 +318,8 @@ def prepare_clip(
             language = None if opts.lang in (None, "", "auto") else opts.lang
             transcript = transcribe(mono, cfg.captions, language=language, cache_dir=cache,
                                     vocabulary=list(game_cfg.vocabulary) if game_cfg else [])
+        if transcript.removed:
+            rep.info(f"Dropped {transcript.removed} line(s) the speech model made up (like 'Thanks for watching').")
         if transcript.words:
             rep.info(f"Speech: {len(transcript.words)} words, language '{transcript.language}', {transcript.engine}"
                      + (" (translated to English)" if transcript.translated else ""))
@@ -439,7 +441,7 @@ def prepare_clip(
         "captions": {
             "enabled": cfg.captions.enabled, "language": transcript.language, "script": script,
             "probability": round(transcript.probability, 3), "translated": transcript.translated,
-            "engine": transcript.engine, "note": transcript.note,
+            "engine": transcript.engine, "note": transcript.note, "made_up_lines_dropped": transcript.removed,
             "words_from": f"gemini:{better.model}" if better else "local", "gemini_note": gemini_note,
         },
         "lines": [{"start": ln.start, "end": ln.end, "words": [[w.start, w.end, w.text] for w in ln.words]} for ln in lines],
