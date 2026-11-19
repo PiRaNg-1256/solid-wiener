@@ -201,3 +201,12 @@ def test_a_failed_preview_does_not_lose_the_prepared_clip(cfg, fake_transcribe, 
                                             facecam="off"), cfg).folders[0]
     assert (folder / "job.json").exists() and (folder / "captions.srt").exists()
     assert not (folder / "preview.jpg").exists()
+
+
+def test_missing_opencv_gives_a_clear_message(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "cv2", None)  # makes `import cv2` fail
+    monkeypatch.setattr(facecam, "_DETECTOR", None)
+    with pytest.raises(ClipperError, match="run setup.cmd again"):
+        facecam.detect_faces([np.zeros((90, 160, 3), np.uint8)])

@@ -77,7 +77,10 @@ _DETECTOR = None
 
 def _detector(size: tuple[int, int]):
     global _DETECTOR
-    import cv2
+    try:
+        import cv2
+    except ImportError as exc:  # code updated without running setup.cmd again
+        raise ClipperError("The facecam layout needs OpenCV, which isn't installed yet: run setup.cmd again.") from exc
 
     try:
         cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
