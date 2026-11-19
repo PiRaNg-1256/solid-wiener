@@ -97,7 +97,7 @@ def main() -> int:
     (ROOT / "assets" / "music").mkdir(parents=True, exist_ok=True)
     if not (ROOT / "clips.xlsx").exists():
         run([PY, "-m", "clipper", "run"], check=False)  # creates clips.xlsx (with a 'How to use' tab)
-    (ROOT / "output" / "ready").mkdir(parents=True, exist_ok=True)
+    (ROOT / "output").mkdir(parents=True, exist_ok=True)
 
     if not ffmpeg_found():
         print("\nFFmpeg (the video engine) isn't installed yet.")
@@ -114,7 +114,8 @@ def main() -> int:
     print("\nSetup finished. Next:")
     print("  1. Optional: paste your free Gemini key into gemini_api_key at the top of config.yaml")
     print("  2. Put some music in assets\\music")
-    print("  3. Put video links in clips.xlsx, save and close it, then double-click run.cmd")
+    print("  3. Double-click menu.cmd, or put video links in clips.xlsx, save and close it, then double-click run.cmd")
+    print("  The full manual is README.md (it opens nicely on the project's GitHub page).")
     return 0
 
 

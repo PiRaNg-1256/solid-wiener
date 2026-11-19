@@ -107,7 +107,7 @@ HELP_ROWS = [
     ("1", "Put one video link per row in the 'Video link' column (sheet 'Videos'). Leave Status empty."),
     ("2", "Fill in only what you want to change. Every empty cell uses the default."),
     ("3", "Save and CLOSE this file (the tool can't write to it while Excel has it open)."),
-    ("4", "Double-click run.cmd (or type: .\\clipper run)."),
+    ("4", "Double-click run.cmd (or menu.cmd and choose 1, or type: .\\clipper run)."),
     ("5", "Rows show 'Edit captions'. Open the folder listed in 'Clip folders'. In each clip folder, fix the words "
           "in captions.srt (Notepad is fine; keep the time lines as they are, or adjust them) and the hook in hook.txt."),
     ("6", "Set those rows' Status to 'Ready', save, close, and run again. The videos are made: Status becomes "
@@ -125,6 +125,8 @@ HELP_ROWS = [
     ("Times after the first hour", "Clip times: 1:02:10-1:02:40"),
     ("Webcam big on top, gameplay below", "Facecam: Auto (or the corner the webcam is in, like Bottom right). "
                                             "Check preview.jpg in the clip folder before setting Ready."),
+    ("A clean clip without effects", "Effects: None (All = also the progress bar and sound effects)"),
+    ("Swear words beeped too", "Swear words: Mask + beep (Show = as said; empty = shown as f**k)"),
     ("Different settings for clips of one video", "Use one row per clip, with the same link."),
     ("Make a finished row again", "Set Status to Redo."),
     ("", ""),
@@ -138,6 +140,8 @@ HELP_ROWS = [
     ("", ""),
     ("TIMES", "Write minutes:seconds (1:20) or hours:minutes:seconds (1:02:10). Clips longer than 59 seconds get "
               "blocked as Shorts if anyone claims copyright."),
+    ("", ""),
+    ("MORE", "Every column, setting and command is explained in README.md (the user manual) in the tool's folder."),
 ]
 
 

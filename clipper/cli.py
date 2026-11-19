@@ -1,4 +1,4 @@
-"""Command line: clipper make | peaks | doctor | update."""
+"""Command line: clipper make | run | render | menu | peaks | doctor | gemini-test | update."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from rich.table import Table
 
 from . import __version__, gemini, gpu, media, render, sheet, sponsorblock
 from .audio import list_tracks
-from .config import load_config
+from .config import PROJECT_DIR, load_config
 from .metadata import fetch_info
 from .moments import find_moments, heatmap_arrays, mask_buckets
 from .pipeline import HookContext, MakeOptions, Reporter, make as run_make, render_clip
@@ -383,11 +383,138 @@ def gemini_test(config: Optional[Path] = typer.Option(None, help="Use a differen
                       " check your limits at aistudio.google.com.")
 
 
-@app.command(help="Update the YouTube downloader. Fixes most 'download failed' errors.")
-def update() -> None:
-    cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp[default,deno]"]
-    console.print("Running: " + " ".join(cmd))
-    raise typer.Exit(subprocess.call(cmd))
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(PROJECT_DIR), *args], capture_output=True, text=True, errors="replace")
+
+
+def _has_gpu_extra() -> bool:
+    try:
+        from importlib.metadata import version
+
+        version("nvidia-cublas-cu12")
+        return True
+    except Exception:
+        return False
+
+
+def update_tool() -> bool:
+    """Newest version of the tool (git installs), then anything new it needs. Returns False if it went wrong."""
+    if not (PROJECT_DIR / ".git").exists() or not shutil.which("git"):
+        console.print("This copy wasn't downloaded with git, so it can't update itself. To update: download the "
+                      "newest ZIP from GitHub, unzip it over this folder (your config.yaml, clips.xlsx and output "
+                      "folder are kept), then double-click setup.cmd.")
+        return True
+    before = _git("rev-parse", "HEAD").stdout.strip()
+    console.print("Getting the newest version of the tool…")
+    pulled = _git("pull", "--ff-only")
+    if pulled.returncode != 0:
+        console.print(f"[red]✗[/red] git couldn't update this folder:\n{escape(pulled.stderr.strip()[-600:])}\n"
+                      "Usually a file the tool ships with was changed here. Run 'git status' to see which, or "
+                      "download a fresh copy (keep config.yaml, clips.xlsx and the output folder).")
+        return False
+    after = _git("rev-parse", "HEAD").stdout.strip()
+    if after == before:
+        console.print("[green]✓[/green] The tool is already the newest version.")
+        return True
+    log = _git("log", "--oneline", "--no-decorate", f"{before}..{after}").stdout.strip().splitlines()
+    console.print(f"[green]✓[/green] Updated ({len(log)} change{'s' if len(log) != 1 else ''}):")
+    for line in log[:10]:
+        console.print(f"  {escape(line)}")
+    target = f"{PROJECT_DIR}[gpu]" if _has_gpu_extra() else str(PROJECT_DIR)
+    console.print("Installing anything new the update needs…")
+    code = subprocess.call([sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "-e", target])
+    if code != 0:
+        console.print("[red]✗[/red] Installing failed. Double-click setup.cmd to finish the update.")
+    return code == 0
+
+
+@app.command(help="Update the tool to its newest version (if it was downloaded with git) and the YouTube downloader. "
+                  "The downloader update fixes most 'download failed' errors.")
+def update(
+    downloader_only: bool = typer.Option(False, "--downloader-only", help="Only update the YouTube downloader"),
+) -> None:
+    ok = True if downloader_only else update_tool()
+    console.print("Updating the YouTube downloader…")
+    code = subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade", "--quiet", "--disable-pip-version-check",
+                            "yt-dlp[default,deno]"])
+    if code == 0:
+        console.print("[green]✓[/green] YouTube downloader updated.")
+    raise typer.Exit(0 if ok and code == 0 else 1)
+
+
+def _open(path: Path) -> None:
+    """Open a file or folder the way double-clicking would."""
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(path))  # noqa: S606 - opening the user's own files is the point
+        else:
+            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+        console.print(f"Opened {escape(str(path))}")
+    except Exception:
+        console.print(f"Open this yourself: {escape(str(path))}")
+
+
+MENU = [
+    ("1", "Work through clips.xlsx (new rows get captions, rows set to Ready get their videos)"),
+    ("2", "Make clips from one YouTube link now"),
+    ("3", "Open clips.xlsx"),
+    ("4", "Open the output folder (your clips)"),
+    ("5", "Check the setup"),
+    ("6", "Update the tool"),
+    ("7", "Test the Gemini key"),
+    ("0", "Quit"),
+]
+
+
+@app.command(help="A simple numbered menu for everything (what menu.cmd opens).")
+def menu(config: Optional[Path] = typer.Option(None, help="Use a different settings file")) -> None:
+    while True:
+        console.rule("Gaming Shorts Clipper")
+        for key, text in MENU:
+            console.print(f"  [bold]{key}[/bold]  {text}")
+        choice = Prompt.ask("Type a number and press Enter", choices=[k for k, _ in MENU], default="1")
+        if choice == "0":
+            return
+        try:
+            cfg = load_config(config)
+            if choice == "1":
+                run(sheet_file=None, config=config)
+            elif choice == "2":
+                link = Prompt.ask("Paste the YouTube link (or the path of a video file)").strip().strip('"')
+                if not link:
+                    continue
+                times = Prompt.ask("Your own times, like 12:30-12:58 (Enter = let the tool find the best moment)",
+                                   default="", show_default=False).strip()
+                opts = MakeOptions()
+                if times:
+                    start, _, end = times.partition("-")
+                    opts.start, opts.end = parse_time(start.strip()), parse_time(end.strip()) if end.strip() else None
+                else:
+                    count = Prompt.ask("How many clips?", default="1")
+                    opts.count = max(1, min(10, int(count))) if count.isdigit() else 1
+                for folder in run_make(normalize_url(link), opts, cfg, RichReporter()):
+                    console.print(f"[green]✓[/green] {escape(str(folder))}")
+            elif choice == "3":
+                path = cfg.path(cfg.sheet.file)
+                if not path.exists():
+                    sheet.create_sheet(path, cfg)
+                _open(path)
+            elif choice == "4":
+                out = cfg.path(cfg.output_dir)
+                out.mkdir(parents=True, exist_ok=True)
+                _open(out)
+            elif choice == "5":
+                doctor(config=config, recheck_gpu=False)
+            elif choice == "6":
+                update_tool()
+            elif choice == "7":
+                gemini_test(config=config)
+        except typer.Exit:
+            pass
+        except ClipperError as exc:
+            console.print(f"[red]✗[/red] {escape(str(exc))}")
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Stopped.[/yellow]")
 
 
 def main() -> None:
