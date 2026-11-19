@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 OUT_W, OUT_H = 1080, 1920
 UI_BOTTOM = 1600  # YouTube's title / channel name overlay covers the screen below roughly this line
+INSET = 0.03  # facecam layout: the webcam panel is cut this far inside the webcam box found, on each side
 
 
 @dataclass
@@ -16,6 +17,7 @@ class Layout:
     caption_bottom: int  # bottom edge of the caption line
     credit_top: int
     gameplay: tuple[int, int, int, int]  # x, y, w, h of the sharp gameplay area
+    hook_center: int | None = None  # if set, the hook box is centred on this line instead (captions move below it)
 
 
 def _even(x: float) -> int:
@@ -78,16 +80,19 @@ def facecam_layout(
     cx, cy, cw, ch = (float(v) for v in cam)
     fx, fy = face if face else (cx + cw / 2, cy + ch * 0.45)
 
-    # webcam: trim it to the top panel's shape, keeping the face in view
+    # webcam: trim it to the top panel's shape, keeping the face in view. Stay a little inside the box: a box found
+    # a few pixels too big would show a strip of gameplay along the panel's edge (scaled up ~3x), while a few
+    # pixels of webcam edge (often a frame graphic anyway) are never missed.
+    bx, by, bw, bh = cx + INSET * cw, cy + INSET * ch, cw * (1 - 2 * INSET), ch * (1 - 2 * INSET)
     aspect = OUT_W / top_h
-    if cw / ch > aspect:
-        nw = ch * aspect
-        nx = min(max(cx, fx - nw / 2), cx + cw - nw)
-        crop = (nx, cy, nw, ch)
+    if bw / bh > aspect:
+        nw = bh * aspect
+        nx = min(max(bx, fx - nw / 2), bx + bw - nw)
+        crop = (nx, by, nw, bh)
     else:
-        nh = cw / aspect
-        ny = min(max(cy, fy - 0.42 * nh), cy + ch - nh)
-        crop = (cx, ny, cw, nh)
+        nh = bw / aspect
+        ny = min(max(by, fy - 0.42 * nh), by + bh - nh)
+        crop = (bx, ny, bw, nh)
     kx, ky, kw, kh = _pos(crop[0]), _pos(crop[1]), _even(crop[2]), _even(crop[3])
     kw, kh = min(kw, src_w - kx), min(kh, src_h - ky)
 
@@ -124,9 +129,10 @@ def facecam_layout(
         name="facecam",
         filter=flt,
         hook_top=150,
-        caption_bottom=top_h + 80,  # captions sit on the line between webcam and gameplay
+        caption_bottom=top_h + 80,  # no hook: captions sit on the line between webcam and gameplay
         credit_top=UI_BOTTOM - 120,
         gameplay=(0, top_h, OUT_W, bot_h),
+        hook_center=top_h,  # the top of the screen is the streamer's face: the hook goes on the line instead
     )
 
 

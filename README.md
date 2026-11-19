@@ -116,7 +116,8 @@ Put **Auto** (or the webcam's corner) in the **Facecam** column. The Short is sp
 - **Bottom half: the gameplay.** It's taken from the side away from the webcam, so the webcam's original corner
   is left out and the face never shows twice. If the webcam sits so central that it can't be avoided, that spot
   is blurred over instead.
-- The hook goes at the top, and the captions sit on the line between the two halves.
+- Nothing covers the face: the hook sits on the line between the two halves, and the captions go just under it
+  (with no hook, the captions sit on the line).
 
 How the webcam is found: **Auto** samples a dozen frames and looks for a face that stays in the same place (game
 characters move around; a webcam doesn't), then finds the webcam's rectangle from its border. That border is the

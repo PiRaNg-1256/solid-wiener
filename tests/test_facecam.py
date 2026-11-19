@@ -100,6 +100,38 @@ def test_layout_keeps_the_webcam_out_of_the_gameplay_half():
     assert "boxblur" in middle.filter  # can't be avoided: blurred over instead
     share = build_layout("blur", 1920, 1080, facecam=(1500, 760, 400, 300), share=0.4)
     assert share.gameplay == (0, 768, 1080, 1152)
+    # the webcam panel is cut a little inside the box, so a box found a few pixels too big shows no gameplay strip
+    assert cy >= 760 + 0.025 * 300 and cy + ch <= 760 + 300 - 0.025 * 300
+
+
+def test_text_stays_off_the_face(cfg):
+    """The top half is the face, so the hook is centred on the line between the halves and captions go under it."""
+    from clipper.captions import Font, build_ass
+    from clipper.transcribe import Word
+
+    layout = build_layout("blur", 1920, 1080, facecam=(1500, 760, 400, 300))
+    style, words = cfg.style, [Word(0.5, 0.9, "the"), Word(1.0, 1.4, "cops")]
+    font = Font(cfg.fonts_dir / style.font_file)
+    pad = max(8, round(style.hook_size * 0.3))
+
+    def positions(hook):
+        ass = build_ass(words, layout=layout, style=style, fonts_dir=cfg.fonts_dir, duration=5, hook=hook).splitlines()
+        caption_bottom = 1920 - int(next(x for x in ass if x.startswith("Style: Caption,")).split(",")[-2])
+        hook_line = next((x for x in ass if x.startswith("Dialogue:") and ",Hook," in x), None)
+        return caption_bottom, int(hook_line.split(",")[7]) if hook_line else None
+
+    bottom, margin = positions(None)
+    assert margin is None and bottom == 960 + 80  # no hook: captions sit on the line
+    for hook, lines in (("WAIT FOR IT", 1), ("WAIT FOR IT | NO WAY", 2)):
+        bottom, margin = positions(hook)
+        box = lines * font.ass_size(style.hook_size) + 2 * pad
+        top = margin - pad
+        assert abs(top + box / 2 - 960) <= 1, (hook, top, box)  # hook box centred on the line
+        assert bottom - font.ass_size(style.caption_size) >= top + box + 20  # caption line starts below the box
+        assert bottom < 1600 - 150  # and stays clear of YouTube's title overlay
+    plain = build_ass(words, layout=build_layout("blur", 1920, 1080), style=style, fonts_dir=cfg.fonts_dir,
+                      duration=5, hook="WAIT FOR IT")
+    assert ",Hook,,0,0,0,," in plain  # other layouts keep the hook at the top, as before
 
 
 @needs_ffmpeg

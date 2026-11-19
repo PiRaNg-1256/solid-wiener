@@ -18,6 +18,7 @@ from .util import ass_time, has_devanagari, hex_to_ass, strip_emoji
 SENTENCE_END = (".", "?", "!", "।", "…")
 CAPTION_MAX_WIDTH = 940  # px a caption line may use (frame is 1080 wide)
 HOOK_MAX_WIDTH = 900
+CAPTION_GAP = 30  # px between a centred hook box and the caption line under it (the line has its own headroom too)
 
 
 @lru_cache(maxsize=16)
@@ -110,7 +111,7 @@ def chunk_words(words: list, max_words: int, fits) -> list[list]:
     return chunks
 
 
-def _styles(style: StyleConfig, layout: Layout, font: Font, credit_font: Font) -> str:
+def _styles(style: StyleConfig, layout: Layout, font: Font, credit_font: Font, caption_bottom: int) -> str:
     base = hex_to_ass(style.caption_color)
     fmt = (
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
@@ -120,9 +121,9 @@ def _styles(style: StyleConfig, layout: Layout, font: Font, credit_font: Font) -
     caption = (
         f"Style: Caption,{font.ass_name},{font.ass_size(style.caption_size)},{base},{base},&H00000000,&H99000000,"
         f"0,0,0,0,100,100,0,0,1,{max(2, round(style.caption_size * 0.085))},{max(1, round(style.caption_size * 0.04))},"
-        f"2,60,60,{OUT_H - layout.caption_bottom},1"
+        f"2,60,60,{OUT_H - caption_bottom},1"
     )
-    hook_pad = max(8, round(style.hook_size * 0.3))
+    hook_pad = _hook_pad(style)
     hook = (
         f"Style: Hook,{font.ass_name},{font.ass_size(style.hook_size)},&H00101010,&H00101010,&H00FFFFFF,&H00FFFFFF,"
         f"0,0,0,0,100,100,0,0,3,{hook_pad},0,8,80,80,{layout.hook_top + hook_pad},1"
@@ -134,19 +135,31 @@ def _styles(style: StyleConfig, layout: Layout, font: Font, credit_font: Font) -
     return f"[V4+ Styles]\n{fmt}\n{caption}\n{hook}\n{credit}\n"
 
 
-def _hook_text(hook: str, style: StyleConfig, font: Font) -> tuple[str, str]:
-    """Returns (ass text, size override tag)."""
+def _hook_pad(style: StyleConfig) -> int:
+    return max(8, round(style.hook_size * 0.3))
+
+
+@dataclass
+class HookText:
+    text: str  # ASS text, lines joined with \N
+    override: str  # size override tag ("" = the style's size)
+    lines: int  # lines on screen
+    px: float  # letter size used
+
+
+def _hook_text(hook: str, style: StyleConfig, font: Font) -> HookText:
     text = strip_emoji(hook).strip()
     if style.hook_uppercase and not has_devanagari(text):
         text = text.upper()
     parts = [escape(p.strip()) for p in text.split("|") if p.strip()]  # '|' = manual line break
     width = max((font.width(p, style.hook_size) for p in parts), default=0)
     lines_needed = sum(max(1, -(-int(font.width(p, style.hook_size)) // HOOK_MAX_WIDTH)) for p in parts)
-    override = ""
+    override, px = "", float(style.hook_size)
     if lines_needed > 2 and width:
         px = max(34, style.hook_size * (2 * HOOK_MAX_WIDTH * 0.92) / sum(font.width(p, style.hook_size) for p in parts))
         override = rf"{{\fs{font.ass_size(px)}}}"
-    return r"\N".join(parts), override
+        lines_needed = sum(max(1, -(-int(font.width(p, px)) // HOOK_MAX_WIDTH)) for p in parts)
+    return HookText(r"\N".join(parts), override, lines_needed, px)
 
 
 @dataclass
@@ -291,11 +304,19 @@ def build_ass(
     highlight = hex_to_ass(style.highlight_color)
     events: list[str] = []
 
+    caption_bottom = layout.caption_bottom
     if hook and hook.strip():
-        text, override = _hook_text(hook, style, font)
-        if text:
+        ht = _hook_text(hook, style, font)
+        if ht.text:
             end = min(duration, style.hook_seconds) if style.hook_seconds > 0 else duration
-            events.append(f"Dialogue: 2,{ass_time(0)},{ass_time(end)},Hook,,0,0,0,,{override}{text}")
+            margin = 0  # 0 = the style's place (layout.hook_top)
+            if layout.hook_center is not None:  # centre the box on a line; captions go below it
+                pad = _hook_pad(style)
+                box = ht.lines * font.ass_size(ht.px) + 2 * pad  # libass line height = the ASS font size
+                top = int(round(layout.hook_center - box / 2))
+                margin = top + pad
+                caption_bottom = max(caption_bottom, top + box + CAPTION_GAP + font.ass_size(style.caption_size))
+            events.append(f"Dialogue: 2,{ass_time(0)},{ass_time(end)},Hook,,0,0,{margin},,{ht.override}{ht.text}")
 
     if credit and credit.strip():
         events.append(f"Dialogue: 0,{ass_time(0)},{ass_time(duration)},Credit,,0,0,0,,{escape(strip_emoji(credit))}")
@@ -331,7 +352,7 @@ def build_ass(
     )
     return (
         header
-        + _styles(style, layout, font, credit_font)
+        + _styles(style, layout, font, credit_font, caption_bottom)
         + "\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         + "\n".join(events)
         + "\n"
