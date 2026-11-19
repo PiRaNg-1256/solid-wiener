@@ -83,6 +83,8 @@ def make(
     end: Optional[str] = typer.Option(None, help="End time when using --start, e.g. 12:58"),
     layout: Optional[str] = typer.Option(None, help="blur (whole gameplay + blurred background) or crop (fill the screen)"),
     zoom: Optional[float] = typer.Option(None, help="blur layout: 1.0 = whole frame, 1.25 = bigger gameplay"),
+    facecam: Optional[str] = typer.Option(None, help="Webcam on top, gameplay below: auto, bottom-right, bottom-left, "
+                                          "top-right, top-left, or x,y,w,h in percent"),
     music: Optional[str] = typer.Option(None, help="'none', or a music file. Default: random track from assets/music"),
     lang: Optional[str] = typer.Option(None, help="Caption language: auto, en or hi"),
     translate: Optional[bool] = typer.Option(None, "--translate/--no-translate", help="Hindi speech -> English captions"),
@@ -107,6 +109,7 @@ def make(
         end=parse_time(end) if end else None,
         layout=layout,
         zoom=zoom,
+        facecam=facecam,
         music=music,
         lang=lang.lower() if lang else None,
         translate=translate,
@@ -136,8 +139,8 @@ def make(
         console.print("Watch each clip.mp4. Titles and description to paste are in post.txt.")
 
 
-@app.command(help="Make the videos of clip folders prepared earlier (after you edited captions.srt / hook.txt).")
-def render(
+@app.command("render", help="Make the videos of clip folders prepared earlier (after you edited captions.srt / hook.txt).")
+def render_command(
     folders: list[Path] = typer.Argument(..., help="One or more clip folders"),
     config: Optional[Path] = typer.Option(None, help="Use a different settings file"),
 ) -> None:
@@ -317,6 +320,15 @@ def doctor(
         if media.ffmpeg_has("encoders", "libx264"):
             chosen = render.pick_encoder(cfg.render)
             add("Video encoding", True, f"{chosen} ({names.get(chosen, chosen)})", required=False)
+        try:
+            import cv2  # noqa: F401
+
+            from .facecam import MODEL
+
+            add("Facecam detector", MODEL.exists(), "ready" if MODEL.exists() else f"missing model file {MODEL.name}",
+                required=False)
+        except ImportError:
+            add("Facecam detector", False, "OpenCV missing: run setup.cmd again", required=False)
         sheet_path = cfg.path(cfg.sheet.file)
         add("Excel sheet", True, str(sheet_path) if sheet_path.exists() else f"{cfg.sheet.file} (created on the first run)",
             required=False)

@@ -25,6 +25,7 @@ Changes from the plan, made while building:
 - **Gemini writes the hook, titles and description** in the same single request per clip, and also sees four frames. Without Gemini the hook comes from the video title.
 - **New videos and livestreams:** with no "Most replayed" graph, the tool uses live-chat replay bursts (finished streams), then timestamps in the comments, then loudness.
 - **Output folders are named after the YouTube video** (`output/<title>/clip 12.30-12.58/`), and only one captions version is made: English, or Hindi in English letters.
+- **Facecam split layout (planned layout C, now built):** an Auto mode finds the webcam with a face detector (YuNet, MIT, bundled, 230 KB) plus border detection over sampled frames; corners and exact percent boxes also work. Top half = enlarged webcam, bottom half = gameplay taken away from the webcam's corner (blurred over if it can't be avoided). preview.jpg is made at the captions step so the layout can be checked.
 - **Typed clip times are followed:** the cut is only nudged by about a second, never stretched to the automatic minimum length.
 - **Text sizes come from the font file's own metrics.** The Hindi-capable font draws much smaller than its size number suggests otherwise.
 

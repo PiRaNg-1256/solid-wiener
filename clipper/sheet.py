@@ -15,6 +15,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from .config import Config
+from .facecam import parse_hint
 from .pipeline import JOB_FILE, MakeOptions, Reporter, prepare, render_clip
 from .util import ClipperError, parse_time
 
@@ -63,6 +64,11 @@ COLUMNS = [
     Column("layout", "Layout", 9, "Blur = whole gameplay on a blurred background, Crop = fill the screen. "
            "Empty = Blur.", choices="Blur,Crop"),
     Column("zoom", "Zoom", 7, "Blur layout only: 1 = whole game frame, up to 2 = bigger gameplay. Empty = 1.25."),
+    Column("facecam", "Facecam", 14, "For streams with a webcam: the webcam goes big on the top half, the gameplay "
+           "on the bottom half (the webcam's corner is left out of the gameplay). Auto = find the webcam by its face, "
+           "or say where it is: Bottom right, Bottom left, Top right, Top left. Exact box: x,y,w,h in percent of "
+           "the frame (75,70,25,30). Off = normal layout. Empty = normal layout.",
+           choices="Auto,Bottom right,Bottom left,Top right,Top left,Off"),
     Column("music", "Music", 16, "Random = a random track from assets\\music, None = no music, or the name of a file "
            "in assets\\music. Empty = Random.", choices="Random,None"),
     Column("credit", "Show credit", 9, "Show 'footage: @creator' on the video. Empty = Yes.", choices="Yes,No"),
@@ -111,6 +117,8 @@ HELP_ROWS = [
     ("No hook at all", "Hook text: -"),
     ("A clip from 2:05 (30 seconds)", "Clip times: 2:05"),
     ("Times after the first hour", "Clip times: 1:02:10-1:02:40"),
+    ("Webcam big on top, gameplay below", "Facecam: Auto (or the corner the webcam is in, like Bottom right). "
+                                            "Check preview.jpg in the clip folder before setting Ready."),
     ("Different settings for clips of one video", "Use one row per clip, with the same link."),
     ("Make a finished row again", "Set Status to Redo."),
     ("", ""),
@@ -155,30 +163,33 @@ def create_sheet(path: Path, cfg: Config) -> None:
 
 def _style_columns(ws, cfg: Config, start: int) -> None:
     """Headers, widths, help notes and dropdowns for COLUMNS[start-1:]."""
-    games = ",".join(list(cfg.games)[:20])
     for index in range(start, len(COLUMNS) + 1):
-        column = COLUMNS[index - 1]
-        cell = ws.cell(row=1, column=index, value=column.header)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = HEADER_OUT if column.output else HEADER_IN
-        cell.alignment = Alignment(wrap_text=True, vertical="center")
-        cell.comment = Comment(column.help, "clipper", width=320, height=140)
-        letter = cell.column_letter
-        ws.column_dimensions[letter].width = column.width
-        choices = column.choices or (games if column.key == "game" else "")
-        if choices:
-            dv = DataValidation(type="list", formula1=f'"{choices}"', allow_blank=True, showErrorMessage=False)
-            ws.add_data_validation(dv)
-            dv.add(f"{letter}2:{letter}1000")
-        for row in range(2, 1001):
-            target = ws.cell(row=row, column=index)
-            if column.text:
-                target.number_format = "@"
-            if column.output:
-                target.fill = GREY
-                target.alignment = Alignment(wrap_text=True, vertical="top")
+        _style_column(ws, index, COLUMNS[index - 1], cfg)
     ws.row_dimensions[1].height = 32
     ws.freeze_panes = "C2"
+
+
+def _style_column(ws, index: int, column: Column, cfg: Config) -> None:
+    """Header, width, help note, dropdown and cell format for one column."""
+    cell = ws.cell(row=1, column=index, value=column.header)
+    cell.font = Font(bold=True, color="FFFFFF")
+    cell.fill = HEADER_OUT if column.output else HEADER_IN
+    cell.alignment = Alignment(wrap_text=True, vertical="center")
+    cell.comment = Comment(column.help, "clipper", width=320, height=140)
+    letter = cell.column_letter
+    ws.column_dimensions[letter].width = column.width
+    choices = column.choices or (",".join(list(cfg.games)[:20]) if column.key == "game" else "")
+    if choices:
+        dv = DataValidation(type="list", formula1=f'"{choices}"', allow_blank=True, showErrorMessage=False)
+        ws.add_data_validation(dv)
+        dv.add(f"{letter}2:{letter}1000")
+    for row in range(2, 1001):
+        target = ws.cell(row=row, column=index)
+        if column.text:
+            target.number_format = "@"
+        if column.output:
+            target.fill = GREY
+            target.alignment = Alignment(wrap_text=True, vertical="top")
 
 
 def open_sheet(path: Path, cfg: Config):
@@ -200,11 +211,7 @@ def open_sheet(path: Path, cfg: Config):
         raise ClipperError(f"{path.name} has no 'Video link' column.")
     next_col = ws.max_column + 1
     for column in missing:
-        cell = ws.cell(row=1, column=next_col, value=column.header)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = HEADER_OUT if column.output else HEADER_IN
-        cell.comment = Comment(column.help, "clipper", width=320, height=140)
-        ws.column_dimensions[cell.column_letter].width = column.width
+        _style_column(ws, next_col, column, cfg)
         columns[column.key] = next_col
         next_col += 1
     return wb, ws, columns
@@ -235,6 +242,7 @@ class RowJob:
     layout: str | None = None
     zoom: float | None = None
     music: str | None = None
+    facecam: str | None = None
     credit: bool | None = None
     gemini: bool | None = None
     game: str | None = None
@@ -244,12 +252,14 @@ class RowJob:
         return MakeOptions(
             hooks=self.hooks or None, slices=self.slices or None, count=self.count, lang=self.lang,
             translate=self.translate, layout=self.layout, zoom=self.zoom, music=self.music, credit=self.credit,
+            facecam=self.facecam,
             gemini=self.gemini, game=self.game, prompt=False, force=self.status == "redo",
             review=self.check_first,
         )
 
     def render_overrides(self) -> dict:
-        return {"layout": self.layout, "zoom": self.zoom, "credit": self.credit, "music": self.music}
+        return {"layout": self.layout, "zoom": self.zoom, "credit": self.credit, "music": self.music,
+                "facecam": self.facecam}
 
 
 _YES = {"yes", "y", "true", "1", "on", "✓", "x"}
@@ -362,6 +372,10 @@ def parse_row(row: int, cells: dict, cfg: Config) -> RowJob:
         if not 1.0 <= job.zoom <= 2.0:
             raise ClipperError("'Zoom' must be between 1 and 2")
     job.music = _music(cells.get("music"), cfg)
+    facecam = _text(cells.get("facecam"))
+    if facecam:
+        hint = parse_hint(facecam)  # raises a readable error for anything it doesn't understand
+        job.facecam = "off" if hint is None else (",".join(f"{v:g}" for v in hint) if isinstance(hint, tuple) else hint)
     job.credit = _yes_no(cells.get("credit"), "Show credit")
     job.gemini = _yes_no(cells.get("gemini"), "Use Gemini")
     game = _text(cells.get("game")).lower()

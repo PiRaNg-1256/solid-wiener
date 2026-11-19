@@ -46,6 +46,8 @@ class StyleConfig:
     hook_seconds: float = 0.0  # 0 = show the hook for the whole clip
     credit: bool = True
     credit_text: str = "footage: {creator}"
+    facecam: str = ""  # "" = off; auto; a corner (bottom-right ...); or x,y,w,h in percent of the frame
+    facecam_share: float = 0.5  # facecam layout: how much of the height the webcam gets (0.3-0.6)
 
 
 @dataclass
@@ -209,6 +211,8 @@ def _merge(target, data: dict, where: str = "") -> None:
 def validate(cfg: Config) -> None:
     if cfg.style.layout not in ("blur", "crop"):
         raise ClipperError("style.layout must be 'blur' or 'crop'")
+    if not 0.3 <= cfg.style.facecam_share <= 0.6:
+        raise ClipperError("style.facecam_share must be between 0.3 and 0.6")
     if not 1.0 <= cfg.style.zoom <= 2.0:
         raise ClipperError("style.zoom must be between 1.0 and 2.0")
     if not 5 <= cfg.clip.min_seconds <= cfg.clip.max_seconds <= 180:

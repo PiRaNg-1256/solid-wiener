@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import __version__, align, audio, captions, db, gemini, media, package, render, signals, sponsorblock
+from . import __version__, align, audio, captions, db, facecam, gemini, media, package, render, signals, sponsorblock
 from .analysis import envelope_db, pseudo_heatmap
 from .config import Config, validate
 from .download import cut_local, download_audio, download_segment
@@ -57,6 +57,7 @@ class MakeOptions:
     prompt: bool = True
     refresh: bool = False
     review: bool = False  # stop after the captions so they can be edited, render later
+    facecam: str | None = None  # "" = off, auto, a corner, or x,y,w,h in percent (None = use config)
 
 
 @dataclass
@@ -110,6 +111,9 @@ def _with_overrides(cfg: Config, opts: MakeOptions) -> Config:
         cfg.music.enabled = False
     if opts.hindi_script:
         cfg.captions.hindi_script = opts.hindi_script.lower()
+    if opts.facecam is not None:
+        cfg.style.facecam = opts.facecam
+    facecam.parse_hint(cfg.style.facecam)  # a readable error now rather than halfway through
     if opts.lang not in (None, "", "auto") and opts.lang not in ("en", "hi"):
         raise ClipperError("Caption language must be auto, en or hi")
     validate(cfg)
@@ -330,6 +334,16 @@ def prepare_clip(
         if w.end > s + 0.05 and w.start < e - 0.05
     ]
 
+    cam = None
+    hint = facecam.parse_hint(cfg.style.facecam)
+    if hint is not None:
+        with rep.step("Finding the streamer's webcam (facecam)"):
+            cam = facecam.find_facecam(segment, s, e, seg.width, seg.height, hint)
+        if cam:
+            rep.info(f"Facecam: {cam.how}")
+        else:
+            rep.warn("No webcam found in this clip, so it uses the normal layout.")
+
     game = package.detect_game(f"{video.title} {_pick_hook(opts, index) or ''}", cfg.games, opts.game)
     game_cfg = game[1] if game else None
 
@@ -428,13 +442,69 @@ def prepare_clip(
         "game": game[0] if game else None,
         "music": {"path": str(track.path), "credit": track.credit} if track else None,
         "settings": {"layout": cfg.style.layout, "zoom": cfg.style.zoom, "credit": cfg.style.credit,
-                     "captions": cfg.captions.enabled, "music": opts.music},
+                     "captions": cfg.captions.enabled, "music": opts.music, "facecam": cfg.style.facecam},
+        "facecam": _facecam_record(cfg.style.facecam, cam),
     }
     (folder / JOB_FILE).write_text(json.dumps(job, ensure_ascii=False, indent=1), encoding="utf-8")
     _write_post(folder, job, cfg, review=True)
+    try:  # a nice-to-have: never lose the prepared clip over it
+        with rep.step("Making a preview picture of the Short"):
+            _preview(folder, job, cfg, lines, hook, video, segment)
+    except Exception as exc:  # noqa: BLE001
+        rep.warn(f"Couldn't make preview.jpg ({exc}); the clip itself is fine.")
     if not video.is_local:
         db.record(cache, video.id, source_start, source_end, folder, hook)
     return folder
+
+
+def _facecam_record(setting: str, cam: facecam.FacecamBox | None) -> dict | None:
+    if facecam.parse_hint(setting) is None:  # "" or Off
+        return None
+    return {"setting": setting, "box": cam.as_list() if cam else None, "face": list(cam.face) if cam and cam.face else None,
+            "how": cam.how if cam else "no webcam found"}
+
+
+def _layout_for(job: dict, cfg: Config):
+    cam = job.get("facecam") or {}
+    if cam.get("box"):
+        return build_layout(cfg.style.layout, job["width"], job["height"], cfg.style.zoom, facecam=cam["box"],
+                            share=cfg.style.facecam_share, face=tuple(cam["face"]) if cam.get("face") else None)
+    return build_layout(cfg.style.layout, job["width"], job["height"], cfg.style.zoom)
+
+
+def _overlay_files(work: Path, cfg: Config, layout, lines, duration: float, hook: str, video: VideoInfo) -> None:
+    """Fonts and the subtitle file (hook, captions, credit) that FFmpeg needs inside the work folder."""
+    fonts = work / "fonts"
+    fonts.mkdir(parents=True, exist_ok=True)
+    for name in {cfg.style.font_file, cfg.style.credit_font_file}:
+        src = cfg.fonts_dir / name
+        if not src.is_file():
+            raise ClipperError(f"Font file missing: {src}")
+        shutil.copy2(src, fonts / name)
+    (work / "clip.ass").write_text(
+        captions.build_ass(lines, layout=layout, style=cfg.style, fonts_dir=cfg.fonts_dir, duration=duration,
+                           hook=hook or None, credit=package.credit_line(cfg, video)),
+        encoding="utf-8",
+    )
+
+
+def _work_dir(cfg: Config, video: VideoInfo, source_start: float) -> Path:
+    work = cfg.path(cfg.cache_dir) / "work" / f"{slugify(video.id, 30, 'clip')}_{int(source_start)}_{int(time.time() * 1000) % 10**8}"
+    work.mkdir(parents=True, exist_ok=True)
+    return work
+
+
+def _preview(folder: Path, job: dict, cfg: Config, lines, hook: str, video: VideoInfo, segment: Path) -> None:
+    """preview.jpg: one frame of the Short as it will look, to check the layout while checking captions."""
+    work = _work_dir(cfg, video, job["source_start"])
+    try:
+        layout = _layout_for(job, cfg)
+        _overlay_files(work, cfg, layout, lines, job["clip_end"] - job["clip_start"], hook, video)
+        render.preview_frame(segment, job["clip_start"], min(job["payoff"], job["clip_end"] - job["clip_start"] - 0.1),
+                             layout, work, "clip.ass", folder / "preview.jpg")
+    finally:
+        if not cfg.render.keep_work_files:
+            shutil.rmtree(work, ignore_errors=True)
 
 
 def _write_post(folder: Path, job: dict, cfg: Config, review: bool) -> None:
@@ -482,6 +552,7 @@ def render_clip(folder: Path, cfg: Config, rep: Reporter | None = None, override
     cfg = copy.deepcopy(cfg)
     cfg.style.layout, cfg.style.zoom = settings["layout"], settings["zoom"]
     cfg.style.credit, cfg.captions.enabled = settings["credit"], settings["captions"]
+    cfg.style.facecam = settings.get("facecam") or ""
     validate(cfg)
     media.init(cfg.ffmpeg)
 
@@ -509,26 +580,22 @@ def render_clip(folder: Path, cfg: Config, rep: Reporter | None = None, override
     if job.get("music") and Path(job["music"]["path"]).exists():
         track = audio.MusicTrack(Path(job["music"]["path"]), job["music"]["credit"])
 
-    work = cfg.path(cfg.cache_dir) / "work" / f"{slugify(video.id, 30, 'clip')}_{int(job['source_start'])}_{int(time.time() * 1000) % 10**8}"
-    work.mkdir(parents=True, exist_ok=True)
+    setting = settings.get("facecam") or ""
+    if (job.get("facecam") or {}).get("setting", "") != setting:  # changed in the sheet after the captions were made
+        hint = facecam.parse_hint(setting)
+        cam = None
+        if hint is not None:
+            with rep.step("Finding the streamer's webcam (facecam)"):
+                cam = facecam.find_facecam(segment, s, e, job["width"], job["height"], hint)
+        job["facecam"] = _facecam_record(setting if hint is not None else "", cam)
+
+    work = _work_dir(cfg, video, job["source_start"])
     try:
-        layout = build_layout(cfg.style.layout, job["width"], job["height"], cfg.style.zoom)
-        fonts = work / "fonts"
-        fonts.mkdir(exist_ok=True)
-        for name in {cfg.style.font_file, cfg.style.credit_font_file}:
-            src = cfg.fonts_dir / name
-            if not src.is_file():
-                raise ClipperError(f"Font file missing: {src}")
-            shutil.copy2(src, fonts / name)
-        credit = package.credit_line(cfg, video)
-        (work / "clip.ass").write_text(
-            captions.build_ass(lines, layout=layout, style=cfg.style, fonts_dir=cfg.fonts_dir, duration=duration,
-                               hook=hook or None, credit=credit),
-            encoding="utf-8",
-        )
+        layout = _layout_for(job, cfg)
+        _overlay_files(work, cfg, layout, lines, duration, hook, video)
         with rep.step("Mixing game audio and music"):
             mixed = audio.prepare_audio(segment, job["has_audio"], s, e, spoken, track, cfg.music, cfg.render, work)
-        for old in ("clip.mp4", "clip_nomusic.mp4", "thumb.jpg"):
+        for old in ("clip.mp4", "clip_nomusic.mp4", "thumb.jpg", "preview.jpg"):
             (folder / old).unlink(missing_ok=True)
         with rep.step("Rendering the Short"):
             encoder = render.render_video(segment, s, e, layout, work, mixed.mixed, folder / "clip.mp4", cfg.render,
@@ -558,6 +625,7 @@ def render_clip(folder: Path, cfg: Config, rep: Reporter | None = None, override
         "game": job["game"],
         "captions": {**job["captions"], "lines": len(lines), "words": len(spoken)},
         "layout": {"name": layout.name, "zoom": cfg.style.zoom},
+        "facecam": job.get("facecam"),
         "video_encoder": encoder,
         "music": None if not mixed.track else {
             "file": mixed.track.path.name, "credit": mixed.track.credit,

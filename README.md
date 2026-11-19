@@ -58,6 +58,7 @@ The tool never works on a row twice: rows that say Done, Edit captions, Failed o
 | **Translate Hindi to English** | Yes = English captions for Hindi speech. | No |
 | **Layout** | Blur (whole gameplay on a blurred background) / Crop (fill the screen). | Blur |
 | **Zoom** | 1 to 2. Blur layout only: higher = bigger gameplay, edges trimmed. | 1.25 |
+| **Facecam** | For streams with a webcam: **Auto**, or the corner it's in (**Bottom right**, Bottom left, Top right, Top left), or an exact box. **Off** = normal layout. See [Facecam split](#facecam-split-streams-with-a-webcam). | Normal layout |
 | **Music** | Random / None / the name of a file in `assets\music`. | Random |
 | **Show credit** | Yes / No ("footage: @creator" on the video). | Yes |
 | **Use Gemini** | Yes / No. | Yes, when a key is set |
@@ -80,6 +81,7 @@ Hover over any header in Excel to see its explanation, and see the **How to use*
 | No hook | **Hook text:** `-` |
 | A clip starting at 2:05 | **Clip times:** `2:05` (30 seconds) |
 | Times after the first hour | **Clip times:** `1:02:10-1:02:40` |
+| Webcam big on top, gameplay below | **Facecam:** `Auto` (or the corner, like `Bottom right`) |
 | Different settings for different clips of one video | One row per clip, with the same link. |
 | Make a finished row again | **Status:** `Redo` |
 
@@ -106,6 +108,33 @@ aa gayi
 - Write normally: the video shows captions in capitals with the spoken word in yellow.
 - Free tool with a preview, if you want one: Subtitle Edit (opens .srt files).
 
+## Facecam split (streams with a webcam)
+
+Put **Auto** (or the webcam's corner) in the **Facecam** column. The Short is split in two:
+
+- **Top half: the webcam, enlarged.** It's cropped around the face to fit the panel, then scaled up.
+- **Bottom half: the gameplay.** It's taken from the side away from the webcam, so the webcam's original corner
+  is left out and the face never shows twice. If the webcam sits so central that it can't be avoided, that spot
+  is blurred over instead.
+- The hook goes at the top, and the captions sit on the line between the two halves.
+
+How the webcam is found: **Auto** samples a dozen frames and looks for a face that stays in the same place (game
+characters move around; a webcam doesn't), then finds the webcam's rectangle from its border. That border is the
+edge that stays put while the gameplay changes. A **corner** name works even when no face is visible (for example,
+a streamer who is turned away). With Auto and no webcam, the clip falls back to the normal layout, and Notes says so.
+
+**Check `preview.jpg`** in the clip folder (it's made with the captions). If the webcam box is off:
+- type the corner instead of Auto, or
+- give the exact box as `x,y,w,h` in percent of the video frame: `75,70,25,30` means "starts 75% from the left and
+  70% from the top; 25% wide and 30% tall";
+
+then set Status to Ready. The box is worked out again before the video is made.
+
+Quality: a small webcam stretched to half the screen looks soft. It works best with 1080p sources and bigger
+webcams. `style.facecam_share` in `config.yaml` sets how much of the height the webcam gets (default 0.5).
+
+In a clips.xlsx made by an older version, the **Facecam** column is added at the far right on the next run.
+
 ## What you get
 
 ```
@@ -117,6 +146,7 @@ output\
       clip.mp4           the Short (after the Ready step)
       clip_nomusic.mp4   same clip, game audio only
       post.txt           title ideas, description (with credits), hashtags, checklist
+      preview.jpg        how the Short will look (made with the captions, before the video)
       thumb.jpg          frame from the most intense moment
       job.json, meta.json  details the tool keeps
 ```
@@ -186,7 +216,7 @@ Everything above works from the sheet. For one-off clips, in a terminal opened i
 
 | Command | What it does |
 |---|---|
-| `make "<link>"` | Make clips now. Options: `--count 3`, `--start 12:30 --end 12:58`, `--hook "TEXT"`, `--lang hi`, `--translate`, `--layout crop`, `--zoom 1.0`, `--music none`, `--no-captions`, `--no-credit`, `--no-gemini`, `--force`, `--review` (stop after captions) |
+| `make "<link>"` | Make clips now. Options: `--count 3`, `--start 12:30 --end 12:58`, `--hook "TEXT"`, `--lang hi`, `--translate`, `--layout crop`, `--zoom 1.0`, `--facecam auto` (or `bottom-right` ...), `--music none`, `--no-captions`, `--no-credit`, `--no-gemini`, `--force`, `--review` (stop after captions) |
 | `render "<clip folder>"` | Make the video of a folder prepared with `--review` |
 | `run` | The same as double-clicking run.cmd |
 | `peaks "<link>"` | Show the "Most replayed" graph and the moments it would pick (downloads nothing) |

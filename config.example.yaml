@@ -40,6 +40,9 @@ style:
   credit: true              # show "footage: @creator" on the video
   credit_text: "footage: {creator}"
   credit_size: 28
+  facecam: ""               # webcam big on top, gameplay below: auto, bottom-right (or another corner), or
+                            # x,y,w,h in percent of the frame; "" = off (the sheet's Facecam column sets it per row)
+  facecam_share: 0.5        # how much of the height the webcam gets (0.3 to 0.6)
 
 captions:
   enabled: true

@@ -106,6 +106,17 @@ def _encode(encoder, segment, clip_start, clip_end, layout, workdir, audio_wav, 
     )
 
 
+def preview_frame(segment: Path, clip_start: float, at: float, layout: Layout, workdir: Path, ass_name: str,
+                  out_path: Path) -> None:
+    """One frame of the finished Short (layout, hook, captions) `at` seconds into the clip, as a JPEG."""
+    filters = f"[0:v]setpts=PTS+{at:.3f}/TB,{layout.filter},ass={ass_name}:fontsdir=fonts,format=yuv420p[v]"
+    media.run_ffmpeg(
+        ["-y", "-ss", f"{clip_start + at:.3f}", "-i", str(Path(segment).resolve()), "-filter_complex", filters,
+         "-map", "[v]", "-frames:v", "1", "-q:v", "3", "-update", "1", str(Path(out_path).resolve())],
+        cwd=workdir, what="Making the preview picture",
+    )
+
+
 def thumbnail(video: Path, at: float, out_path: Path) -> None:
     media.run_ffmpeg(
         ["-y", "-ss", f"{max(0.0, at):.2f}", "-i", str(video), "-frames:v", "1", "-q:v", "3", "-update", "1", str(out_path)],
